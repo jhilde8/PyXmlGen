@@ -1,0 +1,6 @@
+# directories #
+###############
+output/
+__pycache__/
+
+
