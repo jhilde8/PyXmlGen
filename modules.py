@@ -42,6 +42,10 @@ def a2a_meson_field(name, block, cache_block, left, right, output, gammas, mom):
                   block=block, cacheBlock=cache_block, left=left, right=right,
                   output=output, gammas=gammas, mom=mom)
 
+def a2a_new_meson_field(name, block, cache_block, left, right, output, gammas, mom):
+    return module(name, "MContraction::A2ANewMesonField",
+                  block=block, cacheBlock=cache_block, left=left, right=right,
+                  output=output, gammas=gammas, mom=mom)
 
 def a2a_extended_meson_field(name, block, cache_block, types, left, right,
                               loop_vw1, loop_vw2, output, gammas1, gammas2):

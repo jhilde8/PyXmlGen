@@ -11,12 +11,13 @@ N_HIT = 4
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
 # TODO: confirm this against the real 4-hit storage location.
-VW_BASE = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/vw"
+VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
 
 # Low modes: one set (light only), 10 files x 200 vectors, filestem
 # "<VW_BASE>/l_lo_v" / "l_lo_w" (module appends ".<traj>/elemN.bin").
 N_LOW = 2000
 LOW_BIN_SIZE = 200
+LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
 
 # High modes: per flavor, per hit, 12 files x 128 vectors, filestem
 # "<VW_BASE>/<flavor><hit>_v" / "<flavor><hit>_w".
@@ -29,7 +30,7 @@ FLAVOR_HAS_LOW = {"l": True, "s": False, "c": False}
 
 def low_filestem(flavor, vw):
     assert FLAVOR_HAS_LOW[flavor]
-    return f"{VW_BASE}/{flavor}_lo_{vw}"
+    return f"{LOW_VW}/{flavor}_lo_{vw}"
 
 
 def high_filestem(flavor, hit, vw):
@@ -39,7 +40,7 @@ def high_filestem(flavor, hit, vw):
 # --- gamma structures ---------------------------------------------------
 GAMMA5 = "Gamma5"
 IDENTITY = "Identity"
-EMF_GAMMA_FAMILIES = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU SigmaMUNUGamma5"
+EMF_GAMMA_FAMILIES = "GammaMU GammaMUGamma5 Identity Gamma5"    #no tensor structures needed in LEFT/WET BSM basis
 
 # --- momenta --------------------------------------------------------------
 ZERO_MOM = [[0, 0, 0]]
@@ -81,10 +82,10 @@ BLOCK_STRANGE_LEG = 128
 BLOCK_LIGHT_LIGHT = 221
 
 CACHE_BLOCK_MF = 16          # A2AMesonField (kaon, sigma, pion, mix)
+CACHE_BLOCK_LL = 17          # pion and sigma cache block, integer divisor of 221
 CACHE_BLOCK_EMF_CMOF = 32    # A2AExtendedMesonField, A2AChromoMagneticOperatorField
 
 # --- gauge (for CMO / EMF-adjacent smearing) -------------------------------
-# TODO: confirm this against the real 4-hit-era gauge config path.
 GAUGE_FILE = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/configs/ckpoint_lat"
 APE_ALPHA = 0.615384615
 APE_N = 25
