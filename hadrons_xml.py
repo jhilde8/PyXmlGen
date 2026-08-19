@@ -66,6 +66,14 @@ class Job:
         ET.SubElement(genetic, "maxCstGen").text = "100"
         ET.SubElement(genetic, "mutationRate").text = "0.1"
         ET.SubElement(params, "scheduleFile").text = schedule_file or f"./xml/schedule.{run_id}.txt"
+        # We supply a schedule file above, so the genetic scheduler never
+        # actually runs -- but leaving schedulerType unset defaults to
+        # "genetic" anyway, which makes printSchedule() run a full memory
+        # profiling pass (real setup() calls, no garbage collection within
+        # one module's dependency closure) just to print a byte count. That
+        # pass can OOM on large jobs even though the real run never would.
+        scheduler = ET.SubElement(params, "scheduler")
+        ET.SubElement(scheduler, "schedulerType").text = "naive"
         ET.SubElement(params, "graphFile").text = graph_file
         ET.SubElement(params, "parallelWriteMaxRetry").text = "1"
         # We hand-order modules == schedule order below, so Hadrons should
@@ -96,4 +104,7 @@ class Job:
         tree.write(xml_path, encoding="unicode", xml_declaration=True)
 
         schedule_path.parent.mkdir(parents=True, exist_ok=True)
-        schedule_path.write_text("\n".join(self._names) + "\n")
+        # TextWriter's vector<string> format: element count first, then one
+        # element per line (Grid/serialisation/TextIO.h, writeDefault).
+        lines = [str(len(self._names))] + self._names
+        schedule_path.write_text("\n".join(lines) + "\n")
