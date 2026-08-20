@@ -24,6 +24,16 @@ LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
 N_HIGH = 1536
 HIGH_BIN_SIZE = 128
 
+# Raw noise (dense W path): one file per flavor per hit holding the single
+# ComplexField that generates that hit's sources
+# (MIO::SaveSpinColorDiagonalNoise / LoadTimeDilutedSpinColorDiagonalNoise).
+# The dense W array replaces the N_HIGH expanded fields with N_SC = 12
+# combined fields per hit (MIO::LoadCombinedNoise).
+# TODO: confirm this against the real noise storage location.
+NOISE_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/noise"
+N_NOISE_PER_STEM = 1
+N_SC = 12
+
 # light combined (low+high) = 3536; strange/charm = high only = 1536.
 FLAVOR_HAS_LOW = {"l": True, "s": False, "c": False}
 
@@ -35,6 +45,10 @@ def low_filestem(flavor, vw):
 
 def high_filestem(flavor, hit, vw):
     return f"{VW_BASE}/{flavor}{hit}_{vw}"
+
+
+def noise_filestem(flavor, hit):
+    return f"{NOISE_BASE}/{flavor}{hit}_eta"
 
 
 # --- gamma structures ---------------------------------------------------

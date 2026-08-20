@@ -4,23 +4,30 @@ a given A2A vector array, caching the resulting module name so two roles
 that happen to want the same array within one job share one set of
 modules instead of loading it twice.
 
-combined(flavor, vw, hits) loads low modes (once, if the flavor has any)
-followed by each hit in `hits`' high modes, concatenated into one array
-via MIO::LoadCombinedA2AVecs -- base(flavor, hit, vw) is just the
-single-hit case of this. Strange/charm have no low modes
-(config.FLAVOR_HAS_LOW), so their arrays are high-modes-only.
+combined(flavor, vw, hits) produces one array covering exactly `hits`:
+low modes (once, if the flavor has any -- config.FLAVOR_HAS_LOW) followed
+by the high-mode block per hit. base(flavor, hit, vw) is just the
+single-hit case. The two sides now take different paths:
 
-loop_leg(flavor, hit, vw) is for an EMF quark loop's V or W leg: it looks
-for a combined() array already cached in this job that covers `hit` for
-that (flavor, vw) and, if found, builds a MUtilities::VectorPackRefSlice
-pointer view into the (low-mode segment + that hit's high-mode segment)
-of it -- no re-load. If nothing cached covers it, it falls back to a
-fresh single-hit combined() load, pointer-packed the same way, so the
-caller (and LoopPropagatorPtr on the Grid side) sees a uniform pointer
-array either way. In practice light/strange V always hits the cache
-(h_loop is always within the batched external hit range); charm's V and
-every flavor's W never do, since nothing else populates a cached array
-for them.
+  V: MIO::LoadCombinedA2AVecsV reads each hit's expanded high-mode files
+     from disk, with the 1/nHit hit-average normalization applied to the
+     high blocks (nHit = len(hits), so single-hit jobs are numerically
+     unchanged). The whole hit-average factor lives on the V side by
+     convention.
+
+  W: dense/combined representation -- the raw noise ComplexFields are
+     loaded (MIO::LoadTimeDilutedSpinColorDiagonalNoise, one filestem per
+     hit, order = hit order) and expanded in-job by MIO::LoadCombinedA2AVecsW
+     into config.N_SC = 12 dense fermion fields per hit instead of
+     config.N_HIGH expanded ones: slot = nLow + hit*12 + sc. W stays raw
+     unit-modulus noise, no normalization. Downstream consumers must pair
+     dense W slot (hit, sc) at timeslice t with expanded mode
+     (hit*nt + t)*12 + sc.
+
+The old loop_leg() (per-hit pointer views for EMF quark loops) is gone
+with the EMF generators: the EMF rewrite does the hit average of the loop
+propagator inside the job from full multi-hit arrays, so per-hit slicing
+has no remaining consumer.
 """
 import config
 import modules as M
@@ -31,11 +38,27 @@ class VectorPool:
         self.job = job
         self._combined = {}  # (flavor, vw, hits-tuple) -> module name
         self._smeared = {}   # (flavor, hit, vw, width_tag) -> module name
-        self._loop_ptr = {}  # (flavor, hit, vw) -> pointer-pack module name
+        self._noise = {}     # (flavor, hits-tuple) -> noise module name
+
+    def noise(self, flavor, hits):
+        """Raw-noise object for (flavor, hits), one file stem per hit; hit
+        order of every array expanded from it is this `hits` order."""
+        hits = tuple(hits)
+        key = (flavor, hits)
+        if key in self._noise:
+            return self._noise[key]
+        name = f"noise_{flavor}_" + "".join(f"h{h}" for h in hits)
+        stems = [config.noise_filestem(flavor, h) for h in hits]
+        self.job.add(M.load_time_diluted_noise(name, stems,
+                                               config.N_NOISE_PER_STEM))
+        self._noise[key] = name
+        return name
 
     def combined(self, flavor, vw, hits):
         """Full A2A vector array for (flavor, vw) covering exactly `hits`:
-        low modes (if any) once, then each hit's high modes in order."""
+        low modes (if any) once, then each hit's high-mode block. V is read
+        expanded from disk (with 1/len(hits) on the high blocks); W is the
+        dense noise expansion, 12 fields per hit."""
         hits = tuple(hits)
         key = (flavor, vw, hits)
         if key in self._combined:
@@ -43,12 +66,17 @@ class VectorPool:
 
         has_low = config.FLAVOR_HAS_LOW[flavor]
         low_filestem = config.low_filestem(flavor, vw) if has_low else ""
-        high_extensions = [f"{flavor}{h}_{vw}" for h in hits]
         name = f"a2a_{flavor}_{vw}_" + "".join(f"h{h}" for h in hits)
-        self.job.add(M.load_combined_a2a_vecs(
-            name, low_filestem, config.N_LOW if has_low else 0,
-            f"{config.VW_BASE}/", high_extensions, config.N_HIGH,
-            config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
+        if vw == "w":
+            self.job.add(M.load_combined_a2a_vecs_w(
+                name, config.LOW_BIN_SIZE, low_filestem,
+                config.N_LOW if has_low else 0, self.noise(flavor, hits)))
+        else:
+            high_extensions = [f"{flavor}{h}_{vw}" for h in hits]
+            self.job.add(M.load_combined_a2a_vecs_v(
+                name, low_filestem, config.N_LOW if has_low else 0,
+                f"{config.VW_BASE}/", high_extensions, config.N_HIGH,
+                config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=len(hits)))
         self._combined[key] = name
         return name
 
@@ -71,39 +99,3 @@ class VectorPool:
         self._smeared[key] = name
         return name
 
-    def _find_containing(self, flavor, vw, hit):
-        """A cached combined() array covering `hit` for (flavor, vw), if
-        any -- (module name, its hits tuple)."""
-        for (f, v, hits), name in self._combined.items():
-            if f == flavor and v == vw and hit in hits:
-                return name, hits
-        return None
-
-    def loop_leg(self, flavor, hit, vw):
-        """Pointer view of (low modes + `hit`'s high modes) for one leg of
-        an EMF loop propagator, referencing an already-cached combined()
-        array if one covers `hit`, otherwise a fresh single-hit load."""
-        key = (flavor, hit, vw)
-        if key in self._loop_ptr:
-            return self._loop_ptr[key]
-
-        found = self._find_containing(flavor, vw, hit)
-        if found is not None:
-            source, hits = found
-        else:
-            source = self.combined(flavor, vw, [hit])
-            hits = (hit,)
-
-        has_low = config.FLAVOR_HAS_LOW[flavor]
-        idx = hits.index(hit)
-        offsets, counts = [], []
-        if has_low:
-            offsets.append(0)
-            counts.append(config.N_LOW)
-        offsets.append((config.N_LOW if has_low else 0) + idx * config.N_HIGH)
-        counts.append(config.N_HIGH)
-
-        name = f"ptr_{flavor}{hit}_{vw}_loop"
-        self.job.add(M.vector_pack_ref_slice(name, source, offsets, counts))
-        self._loop_ptr[key] = name
-        return name

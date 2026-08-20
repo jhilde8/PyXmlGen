@@ -13,11 +13,77 @@ def load_binned_a2a_vecs(name, bin_size, filestem, size, multi_file=True):
                   filestem=filestem, multiFile=multi_file, size=size)
 
 
-def load_combined_a2a_vecs(name, low_filestem, n_low, high_stem, high_extensions,
-                            n_high_each, low_bin_size, high_bin_size):
-    return module(name, f"MIO::LoadCombinedA2AVecs{low_bin_size}x{high_bin_size}",
+def load_combined_a2a_vecs_v(name, low_filestem, n_low, high_stem, high_extensions,
+                            high_size, low_bin_size, high_bin_size, n_hit=0):
+    # n_hit: 1/nHit hit-average normalization on the high-mode blocks; the
+    # factor lives on the V side by convention, so set it (to the number of
+    # hits in the job's estimator) only for V loads. 0 or 1 = no rescaling
+    # (W loads, single-hit data).
+    return module(name, f"MIO::LoadCombinedA2AVecsV{low_bin_size}x{high_bin_size}",
                   lowFilestem=low_filestem, nLow=n_low, highStem=high_stem,
-                  highExtensions=high_extensions, nHighEach=n_high_each)
+                  highExtensions=high_extensions, highSize=high_size, nHit=n_hit)
+
+
+def time_diluted_noise(name):
+    return module(name, "MNoise::TimeDilutedSpinColorDiagonal")
+
+
+def save_noise(name, filestem, noise):
+    return module(name, "MIO::SaveSpinColorDiagonalNoise",
+                  filestem=filestem, noise=noise)
+
+
+def load_time_diluted_noise(name, file_stems, n_noise_per_file_stem=1):
+    # Hit order of the resulting noise object (and so of every dense W array
+    # expanded from it) is the file_stems order given here.
+    return module(name, "MIO::LoadTimeDilutedSpinColorDiagonalNoise",
+                  fileStems=file_stems, nNoisePerFileStem=n_noise_per_file_stem)
+
+
+def load_combined_a2a_vecs_w(name, low_bin_size, low_filestem, n_low, noise):
+    # Dense/combined high-mode W representation: nLow low modes from binned
+    # files, then 12 dense fermion fields per hit expanded from `noise`
+    # (slot = nLow + hit*12 + sc, sc fastest). No nHit normalization: W stays
+    # raw noise.
+    return module(name, f"MIO::LoadCombinedA2AVecsW{low_bin_size}",
+                  lowFilestem=low_filestem, nLow=n_low, noise=noise)
+
+
+def a2a_high_mode_v_binned(name, bin_size, noise, action, solver, output,
+                            multi_file=True):
+    return module(name, f"MSolver::A2AHighModeVBinned{bin_size}",
+                  noise=noise, action=action, solver=solver, output=output,
+                  multiFile=multi_file)
+
+
+def a2a_low_mode_coarse_binned(name, n_basis, bin_size, eigen_pack, action,
+                                output, schur_convention="", check_interval=0):
+    return module(name, f"MUtilities::A2ALowModeCoarseBinned{n_basis}Bin{bin_size}",
+                  eigenPack=eigen_pack, action=action, output=output,
+                  schurConvention=schur_convention, checkInterval=check_interval)
+
+
+def a2a_low_mode_binned(name, bin_size, action, eigen_pack, output,
+                         multi_file=True):
+    return module(name, f"MUtilities::A2ALowModeBinned{bin_size}",
+                  action=action, eigenPack=eigen_pack, output=output,
+                  multiFile=multi_file)
+
+
+def load_binned_a2a_vecs_v(name, low_bin_size, high_bin_size, low_filestem,
+                            high_file_stems, low_size, high_size, n_hit,
+                            multi_file=True):
+    return module(name, f"MIO::LoadBinnedA2AVecsV{low_bin_size}_{high_bin_size}",
+                  lowFilestem=low_filestem, highFileStems=high_file_stems,
+                  multiFile=multi_file, lowSize=low_size, highSize=high_size,
+                  nHit=n_hit)
+
+
+def load_binned_a2a_vecs_w(name, bin_size, filestem, low_size, noise,
+                            multi_file=True):
+    return module(name, f"MIO::LoadBinnedA2AVecsW{bin_size}",
+                  filestem=filestem, multiFile=multi_file, lowSize=low_size,
+                  noise=noise)
 
 
 def vector_pack_ref_slice(name, source, offsets, counts):
