@@ -36,23 +36,23 @@ from hadrons_xml import Job
 FLAVOR = "l"
 N_BINS_TRUNC = 3
 HIGH_TRUNC = N_BINS_TRUNC * config.HIGH_BIN_SIZE
-
+LOW_TRUNC = 2 * config.LOW_BIN_SIZE
 
 def build_job(hits):
     hits = list(hits)
     tag = "".join(f"h{h}" for h in hits)
-    run_id = f"verify-densew-{tag}"
+    run_id = f"verify.densew.ll.{tag}"
     job = Job(run_id)
 
     v_trunc = f"a2a_{FLAVOR}_v_trunc_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        v_trunc, "", 0, f"{config.VW_BASE}/",
+        v_trunc, f"{config.LOW_VW}", LOW_TRUNC, f"{config.VW_BASE}/",
         [f"{FLAVOR}{h}_v" for h in hits], HIGH_TRUNC,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
 
     w_exp = f"a2a_{FLAVOR}_w_exp_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        w_exp, "", 0, f"{config.VW_BASE}/",
+        w_exp, f"{config.LOW_VW}", LOW_TRUNC, f"{config.VW_BASE}/",
         [f"{FLAVOR}{h}_w" for h in hits], HIGH_TRUNC,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
 
@@ -63,16 +63,16 @@ def build_job(hits):
 
     w_dense = f"a2a_{FLAVOR}_w_dense_{tag}"
     job.add(M.load_combined_a2a_vecs_w(
-        w_dense, config.LOW_BIN_SIZE, "", 0, noise))
+        w_dense, config.LOW_BIN_SIZE, f"{config.LOW_VW}", LOW_TRUNC, noise))
 
-    job.add(M.a2a_meson_field(
+    job.add(M.a2a_new_meson_field(
         f"mf_verify_exp_{tag}", config.BLOCK_STRANGE_LEG, config.CACHE_BLOCK_MF,
         w_exp, v_trunc, f"mf_verify/exp_{tag}/mf",
-        config.GAMMA5, config.ONE_UNIT_MOM))
-    job.add(M.a2a_meson_field(
+        config.GAMMA5, config.PION_MOM))
+    job.add(M.a2a_new_meson_field(
         f"mf_verify_dense_{tag}", config.BLOCK_STRANGE_LEG, config.CACHE_BLOCK_MF,
         w_dense, v_trunc, f"mf_verify/dense_{tag}/mf",
-        config.GAMMA5, config.ONE_UNIT_MOM))
+        config.GAMMA5, config.PION_MOM))
 
     return job, run_id
 

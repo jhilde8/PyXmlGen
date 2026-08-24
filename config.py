@@ -48,13 +48,13 @@ def high_filestem(flavor, hit, vw):
 
 
 def noise_filestem(flavor, hit):
-    return f"{NOISE_BASE}/{flavor}{hit}_eta"
+    return f"{NOISE_BASE}_{flavor}/hit00{hit}"
 
 
 # --- gamma structures ---------------------------------------------------
 GAMMA5 = "Gamma5"
 IDENTITY = "Identity"
-EMF_GAMMA_FAMILIES = "GammaMU GammaMUGamma5 Identity Gamma5"    #no tensor structures needed in LEFT/WET BSM basis
+EMF_GAMMA_FAMILIES = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU"    #no tensor structures needed in LEFT/WET BSM basis
 
 # --- momenta --------------------------------------------------------------
 ZERO_MOM = [[0, 0, 0]]
