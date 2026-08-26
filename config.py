@@ -17,7 +17,7 @@ VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
 # "<VW_BASE>/l_lo_v" / "l_lo_w" (module appends ".<traj>/elemN.bin").
 N_LOW = 2000
 LOW_BIN_SIZE = 200
-LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
+LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo/l_lo_v"
 
 # High modes: per flavor, per hit, 12 files x 128 vectors, filestem
 # "<VW_BASE>/<flavor><hit>_v" / "<flavor><hit>_w".
@@ -50,6 +50,17 @@ def high_filestem(flavor, hit, vw):
 def noise_filestem(flavor, hit):
     return f"{NOISE_BASE}_{flavor}/hit00{hit}"
 
+
+# --- lattice geometry -----------------------------------------------------
+# Needed by offline readers of raw propagator dumps (Frontier/diff_loop_prop.py),
+# which have no Grid to ask. N_T is also N_HIGH / N_SC by construction, since
+# the high modes are time-diluted across the full temporal extent.
+LATT_SIZE = [64, 64, 64, 128]
+N_T = N_HIGH // N_SC
+
+# Byte order for MIO::WriteProp / MIO::LoadProp. These carry no header, so the
+# writer and every reader have to be told the same thing.
+PROP_IO_FORMAT = "IEEE64BIG"
 
 # --- gamma structures ---------------------------------------------------
 GAMMA5 = "Gamma5"

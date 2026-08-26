@@ -113,11 +113,53 @@ def a2a_new_meson_field(name, block, cache_block, left, right, output, gammas, m
                   block=block, cacheBlock=cache_block, left=left, right=right,
                   output=output, gammas=gammas, mom=mom)
 
+def a2a_loop(name, left, right):
+    # Original loop builder: loop = sum_k outerProduct(left[k], right[k]),
+    # plain index-for-index pairing over the whole array, so `right` must be
+    # the fully expanded W. Kept untouched as the independent reference for
+    # the A2ALoopNew regression -- do not reroute it through A2ALoopNew.
+    return module(name, "MContraction::A2ALoop", left=left, right=right)
+
+
+def a2a_loop_new(name, left, right, n_low, block):
+    # Superset of a2a_loop: takes either W representation (deduced from the
+    # array sizes and logged), blocks the mode sum so device residency is set
+    # by `block` rather than by the mode count, and for dense W compresses
+    # each hit's expanded V block to N_SC fields before contracting.
+    # n_low must match the low-mode block both loaders were given.
+    return module(name, "MContraction::A2ALoopNew",
+                  left=left, right=right, nLow=n_low, block=block)
+
+
+def write_prop(name, prop, file, format="IEEE64BIG"):
+    # Raw lexicographic BinaryIO write (no header, no checksum verification);
+    # the module appends ".<traj>" to `file`. `format` must match whatever
+    # MIO::LoadProp / an offline reader is told to expect.
+    return module(name, "MIO::WriteProp", prop=prop, file=file, format=format)
+
+
+def load_prop(name, file, format="IEEE64BIG"):
+    return module(name, "MIO::LoadProp", file=file, format=format)
+
+
 def a2a_extended_meson_field(name, block, cache_block, types, left, right,
-                              loop_vw1, loop_vw2, output, gammas1, gammas2):
+                              output, gammas1, gammas2, loop="",
+                              loop_vw1="", loop_vw2=""):
+    # The quark loop comes in exactly one of two ways -- `loop`, naming a
+    # precomputed PropagatorField (the production path), or `loop_vw1`/
+    # `loop_vw2`, naming the loop's vector arrays for in-module construction.
+    # The latter is expanded-W only and exists as the verification reference;
+    # it goes away with the corresponding branch in the module.
+    if bool(loop) == bool(loop_vw1 or loop_vw2):
+        raise ValueError(f"module '{name}': pass either loop= or "
+                         f"loop_vw1=/loop_vw2=, not both or neither")
+    if not loop and not (loop_vw1 and loop_vw2):
+        raise ValueError(f"module '{name}': the vector path needs both "
+                         f"loop_vw1 and loop_vw2")
     return module(name, "MContraction::A2AExtendedMesonField",
                   block=block, cacheBlock=cache_block, types=types,
-                  left=left, right=right, loop_vw1=loop_vw1, loop_vw2=loop_vw2,
+                  left=left, right=right, loop=loop,
+                  loop_vw1=loop_vw1, loop_vw2=loop_vw2,
                   output=output, gammas1=gammas1, gammas2=gammas2)
 
 
