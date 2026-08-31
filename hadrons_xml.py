@@ -35,7 +35,19 @@ def _xml_scalar(val):
     return str(val)
 
 
+# Option names that really are declared bool in a Hadrons Par struct. A bool
+# reaching any other option is a caller mistake, and a silent one: it
+# serializes to a well-formed "true"/"false" that only fails when Hadrons
+# parses the job on the cluster, reporting "numerical conversion failure on
+# 'false' (typeid: j)" against whichever unsigned int field it landed on.
+BOOL_OPTIONS = {"multiFile"}
+
+
 def _add_option(parent, key, val):
+    if isinstance(val, bool) and key not in BOOL_OPTIONS:
+        raise TypeError(
+            f"option '{key}' got the bool {val!r}; only {sorted(BOOL_OPTIONS)} "
+            f"are boolean in Hadrons. Pass an int (0/1) if that is what you meant")
     el = ET.SubElement(parent, key)
     if isinstance(val, (list, tuple)):
         for item in val:
