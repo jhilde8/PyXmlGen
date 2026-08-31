@@ -1,47 +1,29 @@
 """
-A2ALoopNew verification job: build the same extended meson field three ways in
-one job, from one shared V array, one shared noise object and one shared pair
-of external legs, then diff the HDF5 outputs offline with Frontier/diff_mf.py.
+EMF verification job
 
-    vec    EMF builds the loop in-module from (V, W expanded)
-    exp    EMF takes a loop from A2ALoopNew(V, W expanded)
-    dense  EMF takes a loop from A2ALoopNew(V, W dense)
+We construct the EMF in three ways
 
-Two diffs, each varying exactly one thing:
+1. full V and W vectors from disk input as left and right loop vectors. This reproduces 
+   the current EMF production module. depending on the loop flavor, the v vector present
+   in the loop is the same object as the external vector of the same flavor. These are 
+   built as references to the same environment object.
 
-  vec vs exp    only where the propagator came from -- in-module versus a
-                named environment object. Verifies the loop-input plumbing.
-                Rung `vec` deliberately touches none of the new loop-building
-                code (expanded W, plain index-for-index pairing, the original
-                whole-array LoopPropagator wrapper), so it stays an
-                independent reference.
-  exp vs dense  only the W representation. Same module, same block size, so a
-                failure here is the dense index map or the timeslice gather.
+2. Full V and W vectors from disk, precomputed A2A loop using the specific A2ALoopNew
+   module. EMF inputs have been expanded to take this loop as input, since the downstream 
+   functions do not care whether the loop is constructed in the EMF module or loaded in
 
-The EMF's in-module path is scaffolding with a known deletion date: it cannot
-fit at production hit counts, since both of the loop's mode arrays must stay
-resident alongside the external legs for the module's whole execution. It goes
-away once these diffs pass, and rung `vec` goes with it.
+3. full V, dense W vectors through the A2ALoopNew -> EMF path. verifies that the dense W
+   version of the loop computation regresses to the full W case, and that this fully new 
+   dense W and loop pre-computation regress to the current production standard
 
-Both W arrays are expanded from the SAME noise object rather than one being
-read from the stored W files, so the comparison isolates the loop contraction.
-Whether the stored W files agree with the noise is a separate question, already
-covered by gen_verify_densew.py.
+Once the verification passes, we will remove the capability of the EMF module to take in
+loop vectors. This change is beneficial no matter the hit count, and at worst is a linear 
+split of two pieces of the full EMF computation. Allows us to save and reuse the loops. 
 
-The loop's V array cannot be truncated -- the dense path needs a complete
-nt*N_SC expanded block per hit to gather from, and A2ALoopNew asserts exactly
-that. The low block CAN be, since low modes carry no dilution and pair
-index-for-index in both representations, so main() writes an nLow=0 job (the
-cheap one, still covering the gather) and an nLow=400 job that additionally
-covers A2ALoopNew's nLow offset arithmetic.
+This particular test loads in 2 hits of strange and light V vectors, 2 hits of expanded W vectors
+and constructs 2 hits of dense W vectors from the saved noise fields. One xml is produced per loop
+flavor. 
 
-The external legs are a separate, heavily truncated V read through the same
-loader production uses -- one high bin, no low modes -- since nothing about
-the loop test depends on how many external modes there are, and the meson
-fields stay small.
-
-Resident field count: V nLow+N_HIGH, W_exp nLow+N_HIGH, W_dense nLow+N_SC,
-external legs 128, plus two loop propagators. That is what sets the node count.
 """
 from pathlib import Path
 
@@ -49,8 +31,11 @@ import config
 import modules as M
 from hadrons_xml import Job
 
-FLAVOR = "l"
+FLAVOR_L = "l"
+FLAVOR_S = "s"
 HIT = 0
+
+LOOP_FLAVOR = ["l", "s"]
 
 # Loop-sweep blocking inside A2ALoopNew: how many mode views are open on the
 # device at once, independent of how many modes are resident on the host.
@@ -67,77 +52,99 @@ EXT_HIGH = config.HIGH_BIN_SIZE
 # (gammas1[i] with gammas2[i]) so more than one index structure of the loop is
 # probed -- a single type could be blind to, say, a colour-index error under
 # its colour trace.
-TYPES = "0 1 2 3"
+TYPES = "0"
 GAMMAS = "GammaMUGamma5 GammaMU"
 
 EMF_BLOCK = EXT_HIGH
 EMF_CACHE_BLOCK = config.CACHE_BLOCK_EMF_CMOF
 
 
-def build_job(flavor, hit, n_low, block=LOOP_BLOCK):
-    tag = f"{flavor}{hit}_nlow{n_low}"
-    run_id = f"verify.loop.{tag}"
+def build_job(flavor, hits, n_low, block=LOOP_BLOCK):
+    tag = f"{flavor}loop."+"".join(f"h{h}" for h in hits)
+    run_id = f"verify.{tag}"
     job = Job(run_id)
 
     low_v = config.low_filestem(flavor, "v") if n_low else ""
     low_w = config.low_filestem(flavor, "w") if n_low else ""
 
-    # --- the loop's mode arrays ------------------------------------------
-    # n_hit=0: no 1/nHit rescaling. A common factor would cancel in every
-    # diff, and leaving it out keeps these numbers comparable to the norm2
-    # each module logs.
-    v = f"a2a_{flavor}_v_{tag}"
+    # ---- V vector load ---- #
+    lv_ext = f"a2a_{FLAVOR_L}_v_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        v, low_v, n_low, f"{config.VW_BASE}/",
-        [f"{flavor}{hit}_v"], config.N_HIGH,
+        lv_ext, f"{config.LOW_VW}", 400, f"{config.VW_BASE}/",
+        [f"{FLAVOR_L}{h}_v" for h in hits], EXT_HIGH,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=0))
-
+    
+    sv_ext = f"a2a_{FLAVOR_S}_v_{tag}"
+    job.add(M.load_combined_a2a_vecs_v(
+        sv_ext, "", 0, f"{config.VW_BASE}/",
+        [f"{FLAVOR_S}{h}_v" for h in hits], EXT_HIGH,
+        config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=0))
+     
+    # ---- W vector load ---- #
     noise = f"noise_{flavor}_{tag}"
     job.add(M.load_time_diluted_noise(
-        noise, [config.noise_filestem(flavor, hit)], config.N_NOISE_PER_STEM))
+        noise, [config.noise_filestem(flavor, h) for h in hits], config.N_NOISE_PER_STEM))
 
-    w_exp = f"a2a_{flavor}_w_exp_{tag}"
-    job.add(M.load_binned_a2a_vecs_w(
-        w_exp, config.LOW_BIN_SIZE, low_w, n_low, noise))
+    # light W vectors get low modes, so we branch the modules here. 
+    if flavor == "l":
+        lw_exp = f"a2a_{flavor}_w_exp_{tag}"
+        job.add(M.load_combined_a2a_vecs_v(
+            lw_exp, f"{config.LOW_VW}", LOW_TRUNC, f"{config.VW_BASE}/",
+            [f"{flavor}{h}_w" for h in hits], config.N_HIGH,
+            config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
 
-    w_dense = f"a2a_{flavor}_w_dense_{tag}"
-    job.add(M.load_combined_a2a_vecs_w(
-        w_dense, config.LOW_BIN_SIZE, low_w, n_low, noise))
-
-    # --- external legs, shared by all three EMFs -------------------------
-    ext = f"a2a_{flavor}_ext_{tag}"
-    job.add(M.load_combined_a2a_vecs_v(
-        ext, "", 0, f"{config.VW_BASE}/",
-        [f"{flavor}{hit}_v"], EXT_HIGH,
-        config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=0))
+        lw_dense = f"a2a_{flavor}_w_dense_{tag}"
+        job.add(M.load_combined_a2a_vecs_w(
+            lw_dense, config.LOW_BIN_SIZE, low_w, n_low, noise))
+    
+    elif flavor == "s":
+        sw_exp = f"a2a_{flavor}_w_exp_{tag}"
+        job.add(M.load_combined_a2a_vecs_v(
+            sw_exp, "", 0, f"{config.VW_BASE}/",
+            [f"{flavor}{h}_w" for h in hits], config.N_HIGH,
+            config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
+	
+        sw_dense = f"a2a_{flavor}_w_dense_{tag}"
+        job.add(M.load_combined_a2a_vecs_w(
+            sw_dense, config.LOW_BIN_SIZE, low_w, n_low, noise))
 
     # --- the two precomputed loops ---------------------------------------
-    loop_exp = f"loop_exp_{tag}"
-    job.add(M.a2a_loop_new(loop_exp, left=v, right=w_exp,
+    if flavor == "s":
+        left_loop   = sv_ext
+        right_dense = sw_dense
+        right_exp   = sw_exp
+
+    elif flavor == "l":
+        left_loop   = lv_ext
+        right_dense = lw_dense
+        right_exp   = lw_exp
+
+    loop_exp = f"loop_{flavor}_exp_{tag}"
+    job.add(M.a2a_loop_new(loop_exp, left=left_loop, right=right_exp,
                            n_low=n_low, block=block))
 
-    loop_dense = f"loop_dense_{tag}"
-    job.add(M.a2a_loop_new(loop_dense, left=v, right=w_dense,
+    loop_dense = f"loop_{flavor}_dense_{tag}"
+    job.add(M.a2a_loop_new(loop_dense, left=left_loop, right=right_dense,
                            n_low=n_low, block=block))
 
     # --- the three meson fields ------------------------------------------
     # Same types and gammas throughout, so the three output directories hold
-    # identically named .h5 files and diff_mf.py can match them by basename.
+    # identically named .h5 files and diff_emf.py can match them by basename.
     job.add(M.a2a_extended_meson_field(
         f"emf_vec_{tag}", EMF_BLOCK, EMF_CACHE_BLOCK, TYPES,
-        left=ext, right=ext, output=f"emf_verify/{tag}/vec",
+        left=sv_ext, right=lv_ext, output=f"emf_verify/{tag}/vec",
         gammas1=GAMMAS, gammas2=GAMMAS,
-        loop_vw1=v, loop_vw2=w_exp))
+        loop_vw1=left_loop, loop_vw2=right_exp))
 
     job.add(M.a2a_extended_meson_field(
         f"emf_exp_{tag}", EMF_BLOCK, EMF_CACHE_BLOCK, TYPES,
-        left=ext, right=ext, output=f"emf_verify/{tag}/exp",
+        left=sv_ext, right=lv_ext, output=f"emf_verify/{tag}/exp",
         gammas1=GAMMAS, gammas2=GAMMAS,
         loop=loop_exp))
 
     job.add(M.a2a_extended_meson_field(
         f"emf_dense_{tag}", EMF_BLOCK, EMF_CACHE_BLOCK, TYPES,
-        left=ext, right=ext, output=f"emf_verify/{tag}/dense",
+        left=sv_ext, right=lv_ext, output=f"emf_verify/{tag}/dense",
         gammas1=GAMMAS, gammas2=GAMMAS,
         loop=loop_dense))
 
@@ -147,8 +154,12 @@ def build_job(flavor, hit, n_low, block=LOOP_BLOCK):
 def main():
     out_dir = Path(config.OUTPUT_ROOT) / "verify_loop"
     n = 0
-    for n_low in (0, LOW_TRUNC):
-        job, run_id = build_job(FLAVOR, HIT, n_low)
+    hits = [0, 1]    
+    for flavor in LOOP_FLAVOR:
+        if flavor == "l": n_low = True 
+        else: n_low=False
+
+        job, run_id = build_job(flavor, hits, n_low)
         job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")
         n += 1
     print(f"wrote {n} A2ALoopNew verification jobs to {out_dir}")
