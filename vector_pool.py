@@ -5,9 +5,10 @@ that happen to want the same array within one job share one set of
 modules instead of loading it twice.
 
 combined(flavor, vw, hits) produces one array covering exactly `hits`:
-low modes (once, if the flavor has any -- config.FLAVOR_HAS_LOW) followed
-by the high-mode block per hit. base(flavor, hit, vw) is just the
-single-hit case. The two sides now take different paths:
+low modes (once, if the flavor has any -- config.FLAVOR_HAS_LOW, or as
+forced either way by with_low) followed by the high-mode block per hit.
+base(flavor, hit, vw) is just the single-hit case. The two sides now take
+different paths:
 
   V: MIO::LoadCombinedA2AVecsV reads each hit's expanded high-mode files
      from disk, with the 1/nHit hit-average normalization applied to the
@@ -54,19 +55,36 @@ class VectorPool:
         self._noise[key] = name
         return name
 
-    def combined(self, flavor, vw, hits):
+    def combined(self, flavor, vw, hits, with_low=None):
         """Full A2A vector array for (flavor, vw) covering exactly `hits`:
         low modes (if any) once, then each hit's high-mode block. V is read
         expanded from disk (with 1/len(hits) on the high blocks); W is the
-        dense noise expansion, 12 fields per hit."""
+        dense noise expansion, 12 fields per hit.
+
+        with_low overrides config.FLAVOR_HAS_LOW for this array: pass False
+        to build a high-mode-only array for a flavor that does have low
+        modes. That is what a genuine tiling of the mode index needs -- the
+        low block belongs to exactly one tile, so every other tile asks for
+        its flavor's high modes alone. Suppressing it renames the array
+        '..._nolow' so it can coexist with the full one in the same job.
+        Passing True for a flavor with no low modes is an error rather than
+        a silent no-op. Note this does not touch the 1/nHit factor, which is
+        still len(hits) -- a tile of a larger calculation needs the global
+        hit count there, not the tile's."""
         hits = tuple(hits)
-        key = (flavor, vw, hits)
+        default_low = config.FLAVOR_HAS_LOW[flavor]
+        has_low = default_low if with_low is None else bool(with_low)
+        if has_low and not default_low:
+            raise ValueError(
+                f"with_low=True for flavor '{flavor}', which has no low modes "
+                f"(config.FLAVOR_HAS_LOW)")
+        key = (flavor, vw, hits, has_low)
         if key in self._combined:
             return self._combined[key]
 
-        has_low = config.FLAVOR_HAS_LOW[flavor]
         low_filestem = config.low_filestem(flavor, vw) if has_low else ""
-        name = f"a2a_{flavor}_{vw}_" + "".join(f"h{h}" for h in hits)
+        suffix = "" if has_low == default_low else "_nolow"
+        name = (f"a2a_{flavor}_{vw}_" + "".join(f"h{h}" for h in hits) + suffix)
         if vw == "w":
             self.job.add(M.load_combined_a2a_vecs_w(
                 name, config.LOW_BIN_SIZE, low_filestem,
@@ -80,10 +98,10 @@ class VectorPool:
         self._combined[key] = name
         return name
 
-    def base(self, flavor, hit, vw):
+    def base(self, flavor, hit, vw, with_low=None):
         """Full A2A vector array for (flavor, hit, vw) -- single-hit case
         of combined()."""
-        return self.combined(flavor, vw, [hit])
+        return self.combined(flavor, vw, [hit], with_low=with_low)
 
     def smeared(self, flavor, hit, vw, width_tag, alpha, N):
         """Smeared version of base(flavor, hit, vw) at the given width.

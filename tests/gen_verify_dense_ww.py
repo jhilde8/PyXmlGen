@@ -27,7 +27,11 @@ the configuration whose expanded W vectors are already on disk.
 The hit count generalizes by parameter alone: main() writes a single-hit
 job and a two-hit job.
 """
+import sys
 from pathlib import Path
+
+# The toolkit (config, modules, hadrons_xml, vector_pool) lives one level up.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 import modules as M

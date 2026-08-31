@@ -33,7 +33,11 @@ hard (EXT_LOW low modes, EXT_HIGH per hit) to keep the meson fields and the
 node count down. That is why the external and loop arrays are separate objects
 here even for the loop's own flavor.
 """
+import sys
 from pathlib import Path
+
+# The toolkit (config, modules, hadrons_xml, vector_pool) lives one level up.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 import modules as M

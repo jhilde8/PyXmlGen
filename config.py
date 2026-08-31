@@ -106,9 +106,16 @@ ORTHOG_AXIS = 3
 BLOCK_STRANGE_LEG = 128
 BLOCK_LIGHT_LIGHT = 221
 
-CACHE_BLOCK_MF = 16          # A2AMesonField (kaon, sigma, pion, mix)
-CACHE_BLOCK_LL = 17          # pion and sigma cache block, integer divisor of 221
-CACHE_BLOCK_EMF_CMOF = 32    # A2AExtendedMesonField, A2AChromoMagneticOperatorField
+# cacheBlock tiles the SumRing reduction. Since the A2ASpatialSum rework the
+# GPU path is fastest with no tiling at all -- one tile spanning the whole
+# block -- so GPU jobs pass cacheBlock = block and none of the constants below
+# are referenced by the generators. They are the CPU tile sizes, kept because
+# the same generators serve both builds: on a CPU build the tile is for cache
+# locality and wants to be small. Pointing a generator back at CPU means
+# putting one of these in its cacheBlock argument by hand.
+CB_CPU_MF = 16          # A2AMesonField (kaon, sigma, pion, mix)
+CB_CPU_LL = 17          # pion and sigma, integer divisor of 221
+CB_CPU_EMF_CMOF = 32    # A2AExtendedMesonField, A2AChromoMagneticOperatorField
 
 # --- gauge (for CMO / EMF-adjacent smearing) -------------------------------
 GAUGE_FILE = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/configs/ckpoint_lat"
