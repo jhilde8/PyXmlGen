@@ -17,7 +17,7 @@ VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
 # "<VW_BASE>/l_lo_v" / "l_lo_w" (module appends ".<traj>/elemN.bin").
 N_LOW = 2000
 LOW_BIN_SIZE = 200
-LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo/l_lo_v"
+LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
 
 # High modes: per flavor, per hit, 12 files x 128 vectors, filestem
 # "<VW_BASE>/<flavor><hit>_v" / "<flavor><hit>_w".
