@@ -157,6 +157,7 @@ XML_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF/xml"
 # substituted value is the output directory rather than a file stem.
 TMP_OUTPUT = "TMP_OUTPUT"
 
+GRAPH = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF/graph.gv"
 
 def schedule_file(run_id):
     """Absolute path Hadrons should read this job's schedule from at runtime."""

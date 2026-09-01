@@ -76,7 +76,7 @@ def build_job(hits, width):
     tag = "".join(f"h{h}" for h in hits)
     run_id = f"bench.ll.{tag}.{width_tag}"
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
-              graph_file=config.graph_file(run_id))
+              graph_file=config.GRAPH)
     pool = VectorPool(job)
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))

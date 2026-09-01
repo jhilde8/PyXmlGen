@@ -77,7 +77,7 @@ def build_job(hits):
     tag = "".join(f"h{h}" for h in hits)
     run_id = f"bench.kaon.{tag}"
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
-              graph_file=config.graph_file(run_id))
+              graph_file=config.GRAPH)
     pool = VectorPool(job)
 
     # cacheBlock = block: the GPU path is fastest with the SumRing reduction
