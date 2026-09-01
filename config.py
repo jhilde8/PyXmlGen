@@ -134,3 +134,37 @@ COARSE_OFFSETS = [0, 0, 0, 0]
 # Anchored to this file's directory, not the caller's cwd, so `python3
 # gen_kaon.py` writes to the same place regardless of where it's invoked from.
 OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
+
+# --- Frontier job file locations -------------------------------------------
+# Where every XML and schedule file lives on Frontier. Hadrons resolves
+# scheduleFile against the job's cwd, and the submission script cds to the
+# Lustre working directory, so a relative "./xml/schedule.*.txt" only works
+# because of that choice. Writing it absolute removes the dependency.
+XML_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF/xml"
+
+# Placeholder for the meson field output directory. Hadrons resolves a
+# relative <output> against the job's cwd, which is on Lustre, so a job meant
+# to write to the node-local NVMe has to be given an absolute path -- and that
+# path is only known at runtime. Generators emit "<TMP_OUTPUT>/<name>" and the
+# submission script substitutes the full destination directory, the same way
+# it already substitutes TRAJ_START/TRAJ_END. Use a | delimiter, since the
+# replacement is a path:
+#
+#   sed "s|TMP_OUTPUT|$LOCAL_SCRATCH/mf_bench|g" par.in.xml > par.out.xml
+#
+# The module appends ".<traj>" and creates the directory itself (Hadrons::mkdir
+# is create_directories, so the parent chain comes with it), which is why the
+# substituted value is the output directory rather than a file stem.
+TMP_OUTPUT = "TMP_OUTPUT"
+
+
+def schedule_file(run_id):
+    """Absolute path Hadrons should read this job's schedule from at runtime."""
+    return f"{XML_DIR}/schedule.{run_id}.txt"
+
+
+def graph_file(run_id):
+    """Absolute path for the module dependency graph. Per run id, not a shared
+    'graph.gv': the default is relative and unqualified, so two jobs running
+    from the same working directory would write over each other's."""
+    return f"{XML_DIR}/graph.{run_id}.gv"

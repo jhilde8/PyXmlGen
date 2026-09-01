@@ -75,7 +75,8 @@ def build_job(hits, width):
     width_tag, alpha, N = width
     tag = "".join(f"h{h}" for h in hits)
     run_id = f"bench.ll.{tag}.{width_tag}"
-    job = Job(run_id)
+    job = Job(run_id, schedule_file=config.schedule_file(run_id),
+              graph_file=config.graph_file(run_id))
     pool = VectorPool(job)
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))
@@ -100,12 +101,14 @@ def build_job(hits, width):
 
     name_sigma = f"mf_ll_{tag}_{width_tag}"
     job.add(M.a2a_meson_field(
-        name_sigma, block, block, lw_sm, lv_sm, f"bench/{name_sigma}",
+        name_sigma, block, block, lw_sm, lv_sm,
+        f"{config.TMP_OUTPUT}/{name_sigma}",
         config.IDENTITY, config.SIGMA_MOM))
 
     name_pi = f"mf_pi_{tag}_{width_tag}"
     job.add(M.a2a_meson_field(
-        name_pi, block, block, lw_sm, lv_sm, f"bench/{name_pi}",
+        name_pi, block, block, lw_sm, lv_sm,
+        f"{config.TMP_OUTPUT}/{name_pi}",
         config.GAMMA5, config.PION_MOM))
 
     return job, run_id
