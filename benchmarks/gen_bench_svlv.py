@@ -66,7 +66,7 @@ import modules as M
 from hadrons_xml import Job
 from vector_pool import VectorPool
 
-HIT_SETS = ([0],)
+HIT_SETS = ([0],[0, 1])
 
 # Mode-sweep blocking inside A2ALoopNew: how many mode views are open on the
 # device at once, independent of how many modes are resident on the host.
@@ -117,11 +117,10 @@ def build_job(hits):
         gammas1=config.EMF_GAMMA_FAMILIES, gammas2=config.EMF_GAMMA_FAMILIES,
         loop=loop_s))
 
-    for cmf_tag, gauge_name in (("cmf", "gauge"), ("cmfAPE", "gauge_APE")):
-        name = f"{cmf_tag}_{tag}"
-        job.add(M.a2a_chromomagnetic_operator_field(
-            name, block, block, config.CMO_PARITIES, sv, lv, gauge_name,
-            f"{config.TMP_OUTPUT}/{name}", config.CMO_IF_ORTHOGS))
+    name = f"cmf_{tag}"
+    job.add(M.a2a_chromomagnetic_operator_field(
+        name, block, block, config.CMO_PARITIES, sv, lv, "gauge_APE",
+        f"{config.TMP_OUTPUT}/{name}", config.CMO_IF_ORTHOGS))
 
     # Subtraction operator: the lower-dimensional operator that mixes under
     # renormalization. Same legs, one gamma, zero momentum.

@@ -10,7 +10,6 @@ N_HIT = 4
 
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
-# TODO: confirm this against the real 4-hit storage location.
 VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
 
 # Low modes: one set (light only), 10 files x 200 vectors, filestem
@@ -29,7 +28,6 @@ HIGH_BIN_SIZE = 128
 # (MIO::SaveSpinColorDiagonalNoise / LoadTimeDilutedSpinColorDiagonalNoise).
 # The dense W array replaces the N_HIGH expanded fields with N_SC = 12
 # combined fields per hit (MIO::LoadCombinedNoise).
-# TODO: confirm this against the real noise storage location.
 NOISE_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/noise"
 N_NOISE_PER_STEM = 1
 N_SC = 12
@@ -65,6 +63,7 @@ PROP_IO_FORMAT = "IEEE64BIG"
 # --- gamma structures ---------------------------------------------------
 GAMMA5 = "Gamma5"
 IDENTITY = "Identity"
+G5_IDENT = "Identity Gamma5"
 EMF_GAMMA_FAMILIES = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU"    #no tensor structures needed in LEFT/WET BSM basis
 
 # --- momenta --------------------------------------------------------------
@@ -163,9 +162,3 @@ def schedule_file(run_id):
     """Absolute path Hadrons should read this job's schedule from at runtime."""
     return f"{XML_DIR}/schedule.{run_id}.txt"
 
-
-def graph_file(run_id):
-    """Absolute path for the module dependency graph. Per run id, not a shared
-    'graph.gv': the default is relative and unqualified, so two jobs running
-    from the same working directory would write over each other's."""
-    return f"{XML_DIR}/graph.{run_id}.gv"
