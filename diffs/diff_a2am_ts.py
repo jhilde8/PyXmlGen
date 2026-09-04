@@ -1,18 +1,34 @@
 #!/usr/bin/env python3
 """
-diff_mf_ts.py — compare per-timeslice meson field output (timeSliceIO=true)
-against a merged reference produced by A2AFewMesonField.
+diff_a2am_ts.py — compare per-timeslice A2AMatrixIo output (timeSliceIO true)
+against a merged reference.
 
-Layout, as written by A2AMesonField:
+Field-agnostic, for the same reason diff_a2am.py is: A2AMesonField,
+A2AExtendedMesonField and A2AChromoMagneticOperatorField all write through
+A2AMatrixIo, and their merged oracles (A2AFewMesonField,
+A2AExtendedMesonFieldMT, A2AChromoMagneticOperatorFieldMT) all write the
+merged layout. Only the ioname alphabet differs:
 
-    reference   <fmf_dir>/<ioname>.h5        dataset (nt, ni, nj)
-    test        <mf_dir>/<ioname>.t0007.h5   dataset ( 1, ni, nj)
+    MF      Gamma5_0_0_1              gamma _ px _ py _ pz
+    EMF     type0_GammaMU_GammaMU     type _ gamma1 _ gamma2
+    CMOF    parity0_GijSij            parity _ orthogonality
 
-with ioname = "<gamma>_<px>_<py>_<pz>". Note the HDF5 group name does NOT
-carry the timeslice -- dataname_ is still ionameFn(m,g) -- so a file named
-Gamma5_0_0_1.t0007.h5 contains /Gamma5_0_0_1/a2aMatrix. Stripping the .tNNNN
-to recover the group name is the one thing a reader has to get right that
-diff_mf.py did not have to.
+    python3 diff_a2am_ts.py fmf_cpu_out.0  mf_gpu_out.0
+    python3 diff_a2am_ts.py emf_mt_out.0   emf_gpu_out.0
+    python3 diff_a2am_ts.py cmof_mt_out.0  cmof_gpu_out.0
+
+Layout:
+
+    reference   <ref_dir>/<ioname>.h5         dataset (nt, ni, nj)
+    test        <test_dir>/<ioname>.t0007.h5  dataset ( 1, ni, nj)
+
+Note the HDF5 group name does NOT carry the timeslice -- dataname_ is still
+the ioname -- so a file named Gamma5_0_0_1.t0007.h5 contains
+/Gamma5_0_0_1/a2aMatrix. Stripping the .tNNNN to recover the group name is
+the one thing a reader has to get right that diff_a2am.py did not have to.
+The ioname is matched with glob.escape plus an end-anchored regex, so one
+group whose name is a prefix of another's (type0_GammaMU_GammaMU against
+type0_GammaMU_GammaMUGamma5) does not bleed into it.
 
 Two comparison modes, both worth running:
 
@@ -35,8 +51,8 @@ Pt=8). With one rank in time, timeSliceIO is a no-op and this script would
 pass without the slab logic ever executing.
 
 Usage:
-    python3 diff_mf_ts.py [fmf_dir] [mf_dir] [--traj N] [--tol TOL]
-                          [--mode {merge,slice,both}] [--max-report N]
+    python3 diff_a2am_ts.py [ref_dir] [test_dir] [--traj N] [--tol TOL]
+                            [--mode {merge,slice,both}] [--max-report N]
 """
 
 import sys
@@ -47,7 +63,7 @@ import argparse
 import numpy as np
 import h5py
 
-from diff_mf import load_matrix
+from diff_a2am import load_matrix
 
 TS_RE = re.compile(r"^(?P<ioname>.+)\.t(?P<t>\d+)\.h5$")
 
@@ -263,11 +279,12 @@ def resolve(d, traj):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Diff per-timeslice MF output against a merged reference."
+        description="Diff per-timeslice A2AMatrixIo output (MF, EMF or CMOF) "
+                    "against a merged reference."
     )
-    p.add_argument("fmf_dir", nargs="?", default="fmf_cpu_out",
+    p.add_argument("ref_dir",  nargs="?", default="fmf_cpu_out",
                    help="reference (merged) output directory")
-    p.add_argument("mf_dir", nargs="?", default="mf_ts_out",
+    p.add_argument("test_dir", nargs="?", default="mf_ts_out",
                    help="per-timeslice output directory")
     p.add_argument("--traj", type=int, default=0,
                    help="trajectory appended to bare dir names (default: 0)")
@@ -279,8 +296,8 @@ def main():
                    help="max failing timeslices to list per field (default: 8)")
     args = p.parse_args()
 
-    sys.exit(compare(resolve(args.fmf_dir, args.traj),
-                     resolve(args.mf_dir, args.traj),
+    sys.exit(compare(resolve(args.ref_dir, args.traj),
+                     resolve(args.test_dir, args.traj),
                      args.tol, args.mode, args.max_report))
 
 

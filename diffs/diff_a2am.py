@@ -1,21 +1,41 @@
 #!/usr/bin/env python3
 """
-diff_mf.py — compare meson field HDF5 outputs from Test_fmf_cpu (reference)
-and Test_mf_gpu.
+diff_a2am.py — compare two directories of A2AMatrixIo HDF5 output, merged
+layout (timeSliceIO false), reference against test.
 
-Files are discovered automatically from the FMF reference directory; every
-.h5 file found there is looked up by the same name in the MF directory.
-This covers all (gamma x momentum) combinations produced by the tests without
-requiring the script to know the exact filenames in advance.
+Field-agnostic on purpose. A2AMesonField, A2AExtendedMesonField and
+A2AChromoMagneticOperatorField all write through A2AMatrixIo, so every one of
+them produces <ioname>.h5 holding /<ioname>/a2aMatrix of shape (nt, ni, nj)
+with a compound {re, im} element type. Only the ioname alphabet differs:
+
+    MF      Gamma5_0_0_1              gamma _ px _ py _ pz
+    EMF     type0_GammaMU_GammaMU     type _ gamma1 _ gamma2
+    CMOF    parity0_GijSij            parity _ orthogonality
+
+Nothing below parses an ioname, so all three work unchanged:
+
+    python3 diff_a2am.py fmf_cpu_out.0  mf_gpu_out.0
+    python3 diff_a2am.py emf_mt_out.0   emf_gpu_out.0
+    python3 diff_a2am.py cmof_mt_out.0  cmof_gpu_out.0
+
+Files are DISCOVERED from the reference directory rather than constructed
+from a hardcoded type/gamma/momentum list, and every .h5 found there is
+looked up by the same name in the test directory. That is the property that
+makes this general, and it is what stops a field being silently skipped when
+the gamma set grows -- a script that builds names from a fixed list reports
+ALL PASS on the subset it happens to know about.
+
+For per-timeslice output (timeSliceIO true) use diff_a2am_ts.py, which
+handles the .tNNNN infix this script's splitext would fold into the ioname.
 
 Usage:
-    python3 diff_mf.py [fmf_dir] [mf_dir] [--traj N] [--tol TOL]
+    python3 diff_a2am.py [ref_dir] [test_dir] [--traj N] [--tol TOL]
 
 Defaults:
-    fmf_dir = fmf_cpu_out.0   (FMF CPU reference)
-    mf_dir  = mf_gpu_out.0    (MF GPU output)
-    traj    = 0
-    tol     = 1e-10  (relative L2 norm threshold for PASS)
+    ref_dir  = fmf_cpu_out.0
+    test_dir = mf_gpu_out.0
+    traj     = 0
+    tol      = 1e-10  (relative L2 norm threshold for PASS)
 """
 
 import sys
@@ -99,12 +119,12 @@ def compare(fmf_dir, mf_dir, tol):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Diff MF (reference) vs MF HDF5 meson field outputs."
+        description="Diff reference vs test A2AMatrixIo output (MF, EMF or CMOF)."
     )
-    p.add_argument("fmf_dir", nargs="?", default="fmf_cpu_out",
-                   help="FMF output directory (default: fmf_cpu_out)")
-    p.add_argument("mf_dir",  nargs="?", default="mf_gpu_out",
-                   help="MF output directory  (default: mf_gpu_out)")
+    p.add_argument("ref_dir",  nargs="?", default="fmf_cpu_out",
+                   help="reference output directory (default: fmf_cpu_out)")
+    p.add_argument("test_dir", nargs="?", default="mf_gpu_out",
+                   help="test output directory      (default: mf_gpu_out)")
     p.add_argument("--traj", type=int,   default=0,
                    help="Trajectory number appended to bare dir names (default: 0)")
     p.add_argument("--tol",  type=float, default=1e-10,
@@ -119,8 +139,8 @@ def main():
             return candidate
         return d  # let the file-level checks report the error
 
-    fmf_dir = resolve(args.fmf_dir, args.traj)
-    mf_dir  = resolve(args.mf_dir,  args.traj)
+    fmf_dir = resolve(args.ref_dir,  args.traj)
+    mf_dir  = resolve(args.test_dir, args.traj)
 
     sys.exit(compare(fmf_dir, mf_dir, args.tol))
 

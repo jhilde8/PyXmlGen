@@ -103,10 +103,17 @@ def a2a_coarse_grid(name, bin_size, fine, block_size, offsets, output):
                   fine=fine, blockSize=block_size, offsets=offsets, output=output)
 
 
-def a2a_meson_field(name, block, cache_block, left, right, output, gammas, mom):
+def a2a_meson_field(name, block, cache_block, left, right, output, gammas, mom,
+                     time_slice_io=False):
+    # time_slice_io: skip the temporal all-gather and write one file per
+    # (momentum, gamma, global timeslice), named "<ioname>.tNNNN.h5", spread
+    # over min(nt, nRank) writers instead of nmom*ngamma of them. Worth it
+    # for anything with a fat leg; not for the thin kaon fields, where 128x
+    # the file count is all Lustre metadata for a sub-second write.
     return module(name, "MContraction::A2AMesonField",
                   block=block, cacheBlock=cache_block, left=left, right=right,
-                  output=output, gammas=gammas, mom=mom)
+                  output=output, gammas=gammas, mom=mom,
+                  timeSliceIO=time_slice_io)
 
 def a2a_new_meson_field(name, block, cache_block, left, right, output, gammas, mom):
     return module(name, "MContraction::A2ANewMesonField",
@@ -144,12 +151,16 @@ def load_prop(name, file, format="IEEE64BIG"):
 
 def a2a_extended_meson_field(name, block, cache_block, types, left, right,
                               output, gammas1, gammas2, loop="",
-                              loop_vw1="", loop_vw2=""):
+                              loop_vw1="", loop_vw2="", time_slice_io=False):
     # The quark loop comes in exactly one of two ways -- `loop`, naming a
     # precomputed PropagatorField (the production path), or `loop_vw1`/
     # `loop_vw2`, naming the loop's vector arrays for in-module construction.
     # The latter is expanded-W only and exists as the verification reference;
     # it goes away with the corresponding branch in the module.
+    #
+    # time_slice_io also shrinks mBuf, which EMF sizes ntOut*N_i*N_j rather
+    # than nt*N_i*N_j -- a factor P_t off the per-rank footprint, not just a
+    # different file layout.
     if bool(loop) == bool(loop_vw1 or loop_vw2):
         raise ValueError(f"module '{name}': pass either loop= or "
                          f"loop_vw1=/loop_vw2=, not both or neither")
@@ -160,15 +171,19 @@ def a2a_extended_meson_field(name, block, cache_block, types, left, right,
                   block=block, cacheBlock=cache_block, types=types,
                   left=left, right=right, loop=loop,
                   loop_vw1=loop_vw1, loop_vw2=loop_vw2,
-                  output=output, gammas1=gammas1, gammas2=gammas2)
+                  output=output, gammas1=gammas1, gammas2=gammas2,
+                  timeSliceIO=time_slice_io)
 
 
 def a2a_chromomagnetic_operator_field(name, block, cache_block, parities,
-                                       left, right, gauge, output, if_orthogs):
+                                       left, right, gauge, output, if_orthogs,
+                                       time_slice_io=False):
+    # See a2a_extended_meson_field on time_slice_io: CMOF sizes mBuf the same
+    # way, so this is a memory switch as much as an IO one.
     return module(name, "MContraction::A2AChromoMagneticOperatorField",
                   block=block, cacheBlock=cache_block, parities=parities,
                   left=left, right=right, gauge=gauge, output=output,
-                  ifOrthogs=if_orthogs)
+                  ifOrthogs=if_orthogs, timeSliceIO=time_slice_io)
 
 
 def load_nersc(name, file):
