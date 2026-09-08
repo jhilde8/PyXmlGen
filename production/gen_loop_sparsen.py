@@ -23,20 +23,33 @@ Both were blockers while the light low modes were in scope -- 2000 divides by
 none of the registered bin sizes, and no loader can start reading at a bin other
 than the first -- and both disappear with this split.
 
-Per hit the job holds one expanded V block and its dense W partner:
+Per hit the job holds one expanded V block, its dense W partner, and the
+loader's bin staging:
 
-    V   1536 fields   36.0 GiB per rank      (nt*Nsc, one hit)
-    W     12 fields    0.3 GiB               (dense, N_SC per hit)
-    coarse             0.6 GiB               (1/64 of V, block [4,4,4,1])
-    bvec               0.6 GiB               (packed copy of coarse, pre-write)
-    loop               0.3 GiB               (PropagatorField, 144 cplx/site)
-                      ---------
-                      37.8 GiB of ~61 usable
+    V (unpacked)   1536 fields   36.0 GiB per rank   (nt*Nsc, one hit)
+    loader staging  128 fields    3.0 GiB            (one bin, transient)
+    W dense          12 fields    0.3 GiB            (N_SC per hit)
+    coarse                        0.6 GiB            (1/64 of V, [4,4,4,1])
+    A2ACoarseGrid bvec            0.6 GiB            (packed copy, pre-write)
+    loop                          0.3 GiB            (144 cplx/site)
+                                 ---------
+                                 40.8 GiB of ~59.6 usable
 
-at 24 MiB per field on 256 ranks. Frontier builds with --enable-unified=no, so
-that is host memory; HBM holds only the open views. 32 nodes rather than 16 is
-set by the first line: at 16 nodes a field is 48 MiB and one hit's V is 72.0
-GiB, over the cap. Nothing scales with hit count except the number of links.
+at 24 MiB per field on 256 ranks. That is HOST memory: Frontier builds with
+--enable-unified=no, so lattice data is host-resident (512 GB DDR per node, 64
+GB per rank) and HBM holds only the open views, bounded by --device-mem.
+
+32 nodes rather than 16 is set by the first line: at 16 nodes a field is 48 MiB
+and one hit's V alone is 72.0 GiB, past the per-rank cap.
+
+The staging line used to be 1536 fields rather than 128, because
+LoadCombinedA2AVecsV read a whole extension's bins before unpacking. That put
+one hit at 72.0 GiB per rank and would have forced 64 nodes. It now reads bin by
+bin -- identical IO, since A2AVectorsIo::read opens and closes one file per
+element regardless -- so the staging is a factor highBinSize smaller. If that
+change is ever reverted, this job needs 64 nodes.
+
+Nothing scales with hit count except the number of links.
 
 The loop accumulates across hits through A2ALoopNew's inputLoop, each link
 seeding from its predecessor instead of from zero. Declaring inputLoop as a
@@ -124,15 +137,20 @@ def add_flavor(job, flavor, n_hit, sparsen, sparse_root=SPARSE_ROOT):
             noise, [config.noise_filestem(flavor, h)],
             config.N_NOISE_PER_STEM))
 
-        # low_size = 0 skips the low-mode read entirely (guarded in the module),
-        # so this is one hit's expanded V block and nothing else. n_hit carries
-        # the hit-average factor -- the loader scales each stem's block by 1/nHit
-        # after unpacking -- which is why the loop applies none.
-        job.add(M.load_binned_a2a_vecs_v(
-            v, config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE,
-            low_filestem="",
-            high_file_stems=[config.high_filestem(flavor, h, "v")],
-            low_size=0, high_size=config.N_HIGH, n_hit=n_hit))
+        # n_low = 0 skips the low-mode read entirely (guarded in the module), so
+        # this is one hit's expanded V block and nothing else. One extension per
+        # call, so this loads exactly that hit. n_hit is the GLOBAL hit count,
+        # not the number of extensions here -- the 1/nHit hit-average factor
+        # belongs to the estimator, not to how the load is chunked -- which is
+        # why the loop applies none. (VectorPool.combined hardcodes
+        # n_hit=len(hits) and so cannot be used for a per-hit load.)
+        job.add(M.load_combined_a2a_vecs_v(
+            v, low_filestem="", n_low=0,
+            high_stem=f"{config.VW_BASE}/",
+            high_extensions=[f"{flavor}{h}_v"],
+            high_size=config.N_HIGH,
+            low_bin_size=config.LOW_BIN_SIZE,
+            high_bin_size=config.HIGH_BIN_SIZE, n_hit=n_hit))
 
         # Dense W: n_low = 0, so this is the noise expanded into N_SC fields for
         # this hit and nothing more. A2ALoopNew sees 1536 V against 12 W, deduces

@@ -34,11 +34,15 @@ That is why this is an XML job.
 Chunking. The four 128-mode pieces come from four separate hit directories
 rather than from slices of one array, which avoids depending on anything that
 does not exist: no loader can begin reading at a bin other than the first, so a
-128-mode array cannot be split by loading. LoadBinnedA2AVecsV takes
-highFileStems as a list and fills v[is*highSize ...] per stem, so the baseline's
-mode is*128 + j IS chunk is's mode j, in that order -- which is precisely what
-makes the equivalence exact rather than approximate. nHit is 1 on every load so
-the loader's 1/nHit is the identity and both paths see the same numbers.
+single array cannot be split by loading. LoadCombinedA2AVecsV takes
+highExtensions as a list and fills out[offset ...] one extension at a time with
+offset advancing by highSize, so the baseline's mode h*128 + j IS chunk h's
+mode j, in that order -- which is precisely what makes the equivalence exact
+rather than approximate. nHit is 1 on every load, so the loader's 1/nHit factor
+is the identity and both paths see byte-identical vectors.
+
+highSize is one bin (128), so each extension is a single file, elem0 of that
+hit's directory.
 
 Strange is used because it has no low modes, so nLow is simply each array's
 size. That matters: with left.size() == right.size() A2ALoopNew takes the
@@ -99,16 +103,15 @@ EMF_BLOCK = config.BLOCK_STRANGE_LEG
 EMF_TS_IO = False
 
 
-def stem(hit):
-    return config.high_filestem(TEST_FLAVOR, hit, "v")
-
-
 def load_chunks(job, name, hits):
     """One array holding CHUNK modes from each hit in `hits`, in that order."""
-    job.add(M.load_binned_a2a_vecs_v(
-        name, config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE,
-        low_filestem="", high_file_stems=[stem(h) for h in hits],
-        low_size=0, high_size=CHUNK, n_hit=NO_NORM))
+    job.add(M.load_combined_a2a_vecs_v(
+        name, low_filestem="", n_low=0,
+        high_stem=f"{config.VW_BASE}/",
+        high_extensions=[f"{TEST_FLAVOR}{h}_v" for h in hits],
+        high_size=CHUNK,
+        low_bin_size=config.LOW_BIN_SIZE,
+        high_bin_size=config.HIGH_BIN_SIZE, n_hit=NO_NORM))
     return name
 
 
