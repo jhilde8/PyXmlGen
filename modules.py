@@ -128,14 +128,22 @@ def a2a_loop(name, left, right):
     return module(name, "MContraction::A2ALoop", left=left, right=right)
 
 
-def a2a_loop_new(name, left, right, n_low, block):
+def a2a_loop_new(name, left, right, n_low, block, input_loop=""):
     # Superset of a2a_loop: takes either W representation (deduced from the
     # array sizes and logged), blocks the mode sum so device residency is set
     # by `block` rather than by the mode count, and for dense W compresses
     # each hit's expanded V block to N_SC fields before contracting.
     # n_low must match the low-mode block both loaders were given.
+    #
+    # input_loop names a previous A2ALoopNew's output to seed the sum with
+    # instead of zero. Chaining these is how a job that cannot hold every mode
+    # at once accumulates one loop across separately loaded mode blocks; the
+    # VM keeps only the link in flight and its predecessor alive. Each block
+    # carries whatever normalization its loader applied, so pass nHit on the
+    # high-mode V loads and leave the low-mode loads alone.
     return module(name, "MContraction::A2ALoopNew",
-                  left=left, right=right, nLow=n_low, block=block)
+                  left=left, right=right, nLow=n_low, block=block,
+                  inputLoop=input_loop)
 
 
 def write_prop(name, prop, file, format="IEEE64BIG"):
