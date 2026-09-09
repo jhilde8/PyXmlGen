@@ -43,9 +43,12 @@ from gen_loop_sparsen import build_job
 
 HIT_COUNTS = (1, 2)
 
-# Separate from production's roots so benchmark output cannot overwrite it.
-BENCH_SPARSE_ROOT = "/lustre/orion/phy157/scratch/jhilde/64I/bench/vw_sparse"
-BENCH_LOOP_ROOT = "/lustre/orion/phy157/scratch/jhilde/64I/bench/loop"
+# Under bench/ so this cannot land on top of production's output: the sparsened
+# per-hit names (s0_v ... s7_v) deliberately mirror the unsparsened ones under
+# config.VW_BASE and so carry no hit-count tag of their own.
+BASE = str(Path(config.VW_BASE).parent)
+BENCH_SPARSE_ROOT = f"{BASE}/bench/vw_sparse"
+BENCH_LOOP_ROOT = f"{BASE}/bench/loop"
 
 
 def main():

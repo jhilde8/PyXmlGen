@@ -118,10 +118,17 @@ SPARSE_BIN_HIGH = 256
 # this, so it only binds the expanded path.
 LOOP_BLOCK = 50
 
-# Sparsened vectors and loops go to Lustre, not node-local NVMe: both are
-# collective single-file writes. EDIT THESE to the real Frontier directories.
-SPARSE_ROOT = "/lustre/orion/phy157/scratch/jhilde/64I/vw_sparse"
-LOOP_ROOT = "/lustre/orion/phy157/scratch/jhilde/64I/loop"
+# Site root, taken as the parent of config.VW_BASE so the ensemble path stays
+# written down in exactly one place.
+#
+# Sparsened vectors and loops go to Lustre, not the node-local NVMe the meson
+# fields use: MIO::WriteProp and A2ACoarseGrid both do collective single-file
+# writes, which a per-node filesystem cannot serve. vw_sparse mirrors vw, so a
+# sparsened block sits at the same name its unsparsened original has under
+# config.VW_BASE.
+BASE = str(Path(config.VW_BASE).parent)
+SPARSE_ROOT = f"{BASE}/vw_sparse"
+LOOP_ROOT = f"{BASE}/loop"
 
 
 def add_flavor(job, flavor, n_hit, sparsen, sparse_root=SPARSE_ROOT):

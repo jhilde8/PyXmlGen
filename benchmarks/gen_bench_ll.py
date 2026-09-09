@@ -86,8 +86,22 @@ smeared array costs nothing beyond the unsmeared one it consumes. Peak
 footprint is therefore just W_l + V_l + W_s, 5560 fields at h=1 and 7120 at
 h=2 (35.8 TB and 45.8 TB at 6.44 GB per ComplexD field), plus one scratch
 field. The flip side is that the unsmeared array is left empty and must not
-be referenced after its smear module runs; nothing here does, since all four
-fields are built from the smeared arrays only.
+be referenced after its smear module runs; the four meson fields are built
+from the smeared arrays only, and everything wanting the unsmeared V_l -- the
+light loop and the sparsening -- is scheduled ahead of the smears.
+
+The light loop rides along here rather than in the loop job, because this job
+already holds V_l and W_l at full hit count and the contraction against a
+dense W is free next to that load. It needs no inputLoop chain either: both
+legs are fully resident, so it is one A2ALoopNew call with nLow = N_LOW, which
+takes the dense path and reports Low modes, Gather and High modes as separate
+timers.
+
+Sparsening the unsmeared V_l is guarded to one hit. V_l is N_LOW + N_HIGH*h,
+which 221 divides only at h=1 (3536 = 16*221); at h=2, 5072 = 16*317 with 317
+prime, leaving no bin size in a usable range. The cost is linear in mode count
+so one point gives the rate, and 221 is the only new A2ACoarseGrid
+instantiation any of this needs.
 
 One job per hit count rather than both in one: keeping the runs separate
 stops the h=1 measurement from sharing an allocation with h=2 arrays.
@@ -105,6 +119,24 @@ from vector_pool import VectorPool
 
 HIT_SETS = ([0], [0, 1])
 
+# A2ALoopNew mode-sweep blocking: how many field views are open on the device at
+# once, independent of how many modes are host-resident.
+LOOP_BLOCK = 50
+
+# Sparsening bin for the light V; divides N_LOW + N_HIGH*h only at one hit.
+SPARSE_BIN_LIGHT = 221
+
+# Site root, taken as the parent of config.VW_BASE so the ensemble path stays
+# written down in exactly one place.
+#
+# The loop propagator and the sparsened vectors go to Lustre, not the node-local
+# NVMe the meson fields use: MIO::WriteProp and A2ACoarseGrid both do collective
+# single-file writes, which a per-node filesystem cannot serve. Benchmark output
+# sits under bench/ so it cannot land on top of production's.
+BASE = str(Path(config.VW_BASE).parent)
+LOOP_ROOT = f"{BASE}/bench/loop"
+SPARSE_ROOT = f"{BASE}/bench/vw_sparse"
+
 
 def build_job(hits, width):
     hits = list(hits)
@@ -118,6 +150,21 @@ def build_job(hits, width):
     lw = pool.combined("l", "w", hits)
     lv = pool.combined("l", "v", hits)
     sw = pool.combined("s", "w", hits)
+
+    # Both of these read the UNSMEARED arrays, so they precede the smears --
+    # A2ACovariantSmear moves its source and leaves it empty.
+    loop_l = f"loop_l_{tag}"
+    job.add(M.a2a_loop_new(loop_l, left=lv, right=lw, n_low=config.N_LOW,
+                           block=LOOP_BLOCK, input_loop=""))
+    job.add(M.write_prop(f"save_{loop_l}", prop=loop_l,
+                         file=f"{LOOP_ROOT}/{loop_l}",
+                         format=config.PROP_IO_FORMAT))
+
+    if len(hits) == 1:
+        job.add(M.a2a_coarse_grid(
+            f"sp_l_v_{tag}", SPARSE_BIN_LIGHT, lv,
+            config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
+            f"{SPARSE_ROOT}/l_v_{tag}"))
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))
     job.add(M.ape_smear("gauge_APE", "gauge", config.APE_ALPHA, config.APE_N,
