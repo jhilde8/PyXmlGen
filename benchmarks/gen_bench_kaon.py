@@ -81,9 +81,8 @@ def build_job(hits):
     pool = VectorPool(job)
 
     # cacheBlock = block: the GPU path is fastest with the SumRing reduction
-    # untiled, one tile spanning the whole block (see config.py). Every field
-    # here has a strange leg.
-    block = config.BLOCK_STRANGE_LEG
+    # untiled, one tile spanning the whole block (see config.py).
+    block = config.BLOCK
 
     def mf(name, left, right, gammas):
         job.add(M.a2a_meson_field(

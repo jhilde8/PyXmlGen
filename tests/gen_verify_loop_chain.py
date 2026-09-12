@@ -95,7 +95,7 @@ LOOP_BLOCK = 50
 TYPES = "0"
 GAMMAS = "Gamma5"
 
-EMF_BLOCK = config.BLOCK_STRANGE_LEG
+EMF_BLOCK = config.BLOCK
 
 # Merged layout (one file per type/gamma pair), which is what diffs/diff_a2am.py
 # reads. The per-timeslice layout would need diff_a2am_ts.py and buys nothing

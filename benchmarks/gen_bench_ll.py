@@ -64,9 +64,8 @@ as a check that the contraction cost really is independent of whether its
 input vectors were smeared (the smear leaves the array shapes untouched, so
 the table above is unchanged either way).
 
-blocks differ by field: config.BLOCK_LIGHT_LIGHT for the two light-light
-fields, config.BLOCK_STRANGE_LEG for the two with a strange leg, matching
-production. cacheBlock = block throughout (GPU path, untiled SumRing).
+block is config.BLOCK for all four fields, matching production. cacheBlock =
+block throughout (GPU path, untiled SumRing).
 
 timeSliceIO is on for the light-light pair and off for the kaon pair. It
 skips the temporal all-gather and writes one file per (momentum, gamma,
@@ -181,20 +180,20 @@ def build_job(hits, width):
     lv_sm = smear(lv)
     sw_sm = smear(sw)
 
-    def mf(name, block, left, right, gammas, mom, time_slice_io):
+    def mf(name, left, right, gammas, mom, time_slice_io):
         job.add(M.a2a_meson_field(
-            name, block, block, left, right,
+            name, config.BLOCK, config.BLOCK, left, right,
             f"{config.TMP_OUTPUT}/{name}", gammas, mom,
             time_slice_io=time_slice_io))
 
-    mf(f"mf_ls_ww_{tag}_{width_tag}", config.BLOCK_STRANGE_LEG,
+    mf(f"mf_ls_ww_{tag}_{width_tag}",
        lw_sm, sw_sm, config.IDENTITY, config.KAON_MOM, False)
-    mf(f"mf_sl_{tag}_{width_tag}", config.BLOCK_STRANGE_LEG,
+    mf(f"mf_sl_{tag}_{width_tag}",
        sw_sm, lv_sm, config.GAMMA5, config.KAON_MOM, False)
 
-    mf(f"mf_ll_{tag}_{width_tag}", config.BLOCK_LIGHT_LIGHT,
+    mf(f"mf_ll_{tag}_{width_tag}",
        lw_sm, lv_sm, config.IDENTITY, config.SIGMA_MOM, True)
-    mf(f"mf_pi_{tag}_{width_tag}", config.BLOCK_LIGHT_LIGHT,
+    mf(f"mf_pi_{tag}_{width_tag}",
        lw_sm, lv_sm, config.GAMMA5, config.PION_MOM, True)
 
     return job, run_id

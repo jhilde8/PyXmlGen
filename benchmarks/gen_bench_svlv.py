@@ -152,7 +152,7 @@ def build_job(hits):
 
     # cacheBlock = block: the GPU path is fastest with the SumRing reduction
     # untiled, one tile spanning the whole block (see config.py).
-    block = config.BLOCK_STRANGE_LEG
+    block = config.BLOCK
 
     sv = pool.combined("s", "v", hits)
     sw = pool.combined("s", "w", hits)

@@ -80,11 +80,11 @@ def build_job(hits):
         ws_dense, 0, f"{config.LOW_VW}", 0, noise_s))
     
     job.add(M.a2a_new_meson_field(
-        f"mf_verify_exp_{tag}", config.BLOCK_STRANGE_LEG, config.CACHE_BLOCK_MF,
+        f"mf_verify_exp_{tag}", config.BLOCK, config.BLOCK,
         wl_exp, ws_exp, f"mf_verify/exp_{tag}/mf",
         config.GAMMA5, config.PION_MOM))
     job.add(M.a2a_new_meson_field(
-        f"mf_verify_dense_{tag}", config.BLOCK_STRANGE_LEG, config.CACHE_BLOCK_MF,
+        f"mf_verify_dense_{tag}", config.BLOCK, config.BLOCK,
         wl_dense, ws_dense, f"mf_verify/dense_{tag}/mf",
         config.GAMMA5, config.PION_MOM))
 

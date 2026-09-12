@@ -1,12 +1,11 @@
 """
-Site-specific constants for the 4-hit A2A vector layout and physics
-parameters. EDIT THE PATHS BELOW to match the real Frontier directory --
-they're placeholders copied from Frontier/MF/par.postCG.xml's structure,
-not verified locations.
+Site-specific constants for the A2A vector layout (N_HIT hits per
+configuration) and physics parameters. Paths are checked against the Frontier
+tree when the generated XML is reviewed there before submission.
 """
 from pathlib import Path
 
-N_HIT = 4
+N_HIT = 8
 
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
@@ -101,9 +100,13 @@ SMEAR_WIDTHS = [
 ORTHOG_AXIS = 3
 
 # --- block / cacheBlock rules ---------------------------------------------
-# block: 128 for anything with a strange leg, 221 for light-light.
-BLOCK_STRANGE_LEG = 128
-BLOCK_LIGHT_LIGHT = 221
+# block: modes per GEMM side, the same for every A2AMesonField,
+# A2AExtendedMesonField and A2AChromoMagneticOperatorField. 256 over 128 was
+# measured on 32^3x64 at the 256- and 512-node local volumes: the spatial
+# reduce is unchanged (its wire bytes do not depend on block), while the
+# per-block costs -- file open/close, Pack, and at the 512-node local volume
+# the GEMM -- all drop.
+BLOCK = 256
 
 # cacheBlock tiles the SumRing reduction. Since the A2ASpatialSum rework the
 # GPU path is fastest with no tiling at all -- one tile spanning the whole
@@ -112,8 +115,7 @@ BLOCK_LIGHT_LIGHT = 221
 # the same generators serve both builds: on a CPU build the tile is for cache
 # locality and wants to be small. Pointing a generator back at CPU means
 # putting one of these in its cacheBlock argument by hand.
-CB_CPU_MF = 16          # A2AMesonField (kaon, sigma, pion, mix)
-CB_CPU_LL = 17          # pion and sigma, integer divisor of 221
+CB_CPU_MF = 16          # A2AMesonField
 CB_CPU_EMF_CMOF = 32    # A2AExtendedMesonField, A2AChromoMagneticOperatorField
 
 # --- gauge (for CMO / EMF-adjacent smearing) -------------------------------

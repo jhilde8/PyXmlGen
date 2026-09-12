@@ -71,8 +71,8 @@ EXT_HIGH = 2 * config.HIGH_BIN_SIZE
 TYPES = "0"
 GAMMAS = "GammaMUGamma5 GammaMU"
 
-EMF_BLOCK = config.HIGH_BIN_SIZE
-EMF_CACHE_BLOCK = config.CACHE_BLOCK_EMF_CMOF
+EMF_BLOCK = config.BLOCK
+EMF_CACHE_BLOCK = EMF_BLOCK
 
 
 def low_stem(flavor, vw):
