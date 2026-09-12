@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-diff_a2am.py — compare two directories of A2AMatrixIo HDF5 output, merged
-layout (timeSliceIO false), reference against test.
+diff_a2am.py — compare two directories of A2AMatrixIo HDF5 output, reference
+against test, in either layout as long as both sides share it.
 
 Field-agnostic on purpose. A2AMesonField, A2AExtendedMesonField and
 A2AChromoMagneticOperatorField all write through A2AMatrixIo, so every one of
@@ -25,8 +25,18 @@ makes this general, and it is what stops a field being silently skipped when
 the gamma set grows -- a script that builds names from a fixed list reports
 ALL PASS on the subset it happens to know about.
 
-For per-timeslice output (timeSliceIO true) use diff_a2am_ts.py, which
-handles the .tNNNN infix this script's splitext would fold into the ioname.
+Both layouts work. A2AMatrixIo is constructed with the filename and the
+dataname separately, so the per-timeslice layout adds a .tNNNN infix to the
+FILE name only -- Gamma5_0_0_1.t0007.h5 still holds /Gamma5_0_0_1/a2aMatrix.
+split_name below recovers the group by stripping that infix and keeps the file
+stem for reporting, since with timeSliceIO one ioname spans nt files and the
+stem is what distinguishes them.
+
+    python3 diff_a2am.py emf_ref_out.0  emf_new_out.0     merged or per-timeslice
+
+Use diff_a2am_ts.py instead when the two sides have DIFFERENT layouts -- a
+per-timeslice run against a merged oracle -- which is the case this script
+cannot do, since it pairs files by name.
 
 Usage:
     python3 diff_a2am.py [ref_dir] [test_dir] [--traj N] [--tol TOL]
@@ -40,10 +50,28 @@ Defaults:
 
 import sys
 import os
+import re
 import glob
 import argparse
 import numpy as np
 import h5py
+
+# Trailing .tNNNN on a file stem, the per-timeslice infix. Anchored at the end
+# so an ioname that happens to contain ".t" followed by digits mid-name is not
+# truncated.
+TS_RE = re.compile(r"^(?P<ioname>.+)\.t\d+$")
+
+
+def split_name(h5path):
+    """(label, group) for one A2AMatrixIo file, in either layout.
+
+    label is the file stem, which identifies the file in the report; group is
+    the HDF5 group, which never carries the timeslice.
+    """
+    stem = os.path.splitext(os.path.basename(h5path))[0]
+    m    = TS_RE.match(stem)
+
+    return stem, (m.group("ioname") if m else stem)
 
 
 def load_matrix(h5path, ioname):
@@ -66,11 +94,11 @@ def compare(fmf_dir, mf_dir, tol):
         return 1
 
     for fmf_file in fmf_files:
-        ioname  = os.path.splitext(os.path.basename(fmf_file))[0]
+        label, ioname = split_name(fmf_file)
         mf_file = os.path.join(mf_dir, os.path.basename(fmf_file))
 
         if not os.path.exists(mf_file):
-            print(f"\n[{ioname}]  MISSING in MF dir: {mf_file}")
+            print(f"\n[{label}]  MISSING in MF dir: {mf_file}")
             all_pass = False
             continue
 
@@ -78,12 +106,12 @@ def compare(fmf_dir, mf_dir, tol):
             fmf = load_matrix(fmf_file, ioname)
             mf  = load_matrix(mf_file,  ioname)
         except Exception as e:
-            print(f"\n[{ioname}]  READ ERROR: {e}")
+            print(f"\n[{label}]  READ ERROR: {e}")
             all_pass = False
             continue
 
         if fmf.shape != mf.shape:
-            print(f"\n[{ioname}]  SHAPE MISMATCH: FMF={fmf.shape}  MF={mf.shape}")
+            print(f"\n[{label}]  SHAPE MISMATCH: FMF={fmf.shape}  MF={mf.shape}")
             all_pass = False
             continue
 
@@ -103,7 +131,7 @@ def compare(fmf_dir, mf_dir, tol):
         if status == "FAIL":
             all_pass = False
 
-        print(f"\n[{ioname}]  →  {status}")
+        print(f"\n[{label}]  →  {status}")
         print(f"  shape       : {fmf.shape}")
         print(f"  mean|Δ|     : {mean_abs:.6e}")
         print(f"  rel L2 |Δ|  : {rel_l2:.6e}   ({'≤' if rel_l2 <= tol else '>'} tol {tol:.1e})")
