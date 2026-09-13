@@ -68,11 +68,8 @@ from hadrons_xml import Job
 FLAVOR = "c"
 NOISE_FLAVOR = "ud"
 
-BASE = str(Path(config.VW_BASE).parent)
-LOOP_ROOT = f"{BASE}/loop"
 
-
-def build_job(n_hit=config.N_HIT, run_id=None, loop_root=LOOP_ROOT):
+def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
     # run_id and loop_root are parameters so a benchmark can emit this exact
     # structure at a lower hit count without landing on production's output.
     run_id = run_id or f"loop.charm.h{n_hit}"

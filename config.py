@@ -48,6 +48,14 @@ def noise_filestem(flavor, hit):
     return f"{NOISE_BASE}_{flavor}/hit00{hit}"
 
 
+# Loop propagators and sparsened vectors, beside VW_BASE on Lustre. Both are
+# written by collective single-file writes (MIO::WriteProp, A2ACoarseGrid),
+# which node-local NVMe cannot serve. The charm loop job writes into LOOP_ROOT
+# and the contraction job loads from it, so the path lives here once.
+LOOP_ROOT = str(Path(VW_BASE).parent / "a2aloop")
+SPARSE_ROOT = str(Path(VW_BASE).parent / "sparse")
+
+
 # --- lattice geometry -----------------------------------------------------
 # Needed by offline readers of raw propagator dumps (Frontier/diff_loop_prop.py),
 # which have no Grid to ask. N_T is also N_HIGH / N_SC by construction, since
