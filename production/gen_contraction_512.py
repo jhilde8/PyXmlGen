@@ -13,7 +13,7 @@ rank and all four legs fit at once, so nothing is tiled:
                                            ------
                                            42.1 GiB of 59.6 per rank
 
-The loops, gauge fields and coarse-grid staging add well under a GiB. Charm
+The loops and gauge fields add well under a GiB. Charm
 would push the vectors to 60.3 GiB, which is why its loop is built separately
 (production/gen_charm_loop.py, 32 nodes) and only loaded here. That job has to
 finish first.
@@ -22,34 +22,36 @@ Schedule (module order == schedule order):
 
     gauge, gauge_APE, loop_c         cheap; a bad path fails in the first minute
     noise_l, W_l, V_l
-    loop_l, save, sparsen V_l        read the unsmeared V_l
+    loop_l, save
     noise_s, W_s, V_s                vector peak from here on
-    loop_s, save, sparsen V_s
+    loop_s, save
     mf_ls_ww, mf_sl, mf_ls, mf_ll, mf_pi              unsmeared
     emf_sloop, emf_lloop, emf_cloop, cmf_ape, mix     unsmeared
     smear V_s, V_l, W_l, W_s
     mf_ls_ww, mf_sl, mf_ls, mf_ll, mf_pi, cmf_ape     smeared
 
 A2ACovariantSmear moves its source and leaves it empty, so every consumer of
-an unsmeared array -- loops, sparsening and the unsmeared contractions -- is
-scheduled ahead of the smears. The loops and sparsened vectors are on Lustre
-before the first contraction, so a failure later loses contractions only. The
-two thin kaon fields go first because they exercise the TMP_OUTPUT path and
-per-rank file creation at under a GB per file, before the EMFs.
+an unsmeared array -- the loops and the unsmeared contractions -- is scheduled
+ahead of the smears. The loops are on Lustre before the first contraction, so a
+failure later loses contractions only. The two thin kaon fields go first
+because they exercise the TMP_OUTPUT path and per-rank file creation at under a
+GB per file, before the EMFs.
+
+No sparsening here. It needs only the unsmeared V on disk, so it runs as its
+own job on a small node count, where vector loads cost the fewest node-hours.
 
 Loops. loop_l is one A2ALoopNew call with nLow = N_LOW, so its low-mode phase
-opens 2*LOOP_BLOCK fields at once; loop_s has no low modes and ignores block.
-Both are normalized by the loader (nHit = N_HIT on V), matching loop_c.
-
-Sparsening. A2ACoarseGrid takes the whole array, so each flavour comes out as
-one file holding every hit -- 76 records of 188 for V_l, 48 of 256 for V_s --
-not the one-file-per-hit layout gen_loop_sparsen.py wrote. Both bin sizes have
-to be registered instantiations of A2ACoarseGrid.
+opens 2*LOOP_BLOCK_LIGHT fields on the device at once -- 600 MiB per rank at
+200, well inside --device-mem. loop_s has no low modes, and its high-mode phase
+always contracts N_SC fields whatever block says. Both are normalized by the
+loader (nHit = N_HIT on V), matching loop_c.
 
 Output. Meson fields go to TMP_OUTPUT (node-local NVMe, substituted by the
 submission script), ~30 TB per configuration, ~22 TB of it the three EMFs.
-timeSliceIO is off only for mf_ls_ww and mf_sl, where 128x the file count buys
-nothing on a sub-GB write.
+timeSliceIO is on for every field, so everything downstream reads one layout.
+That includes the thin kaon fields: mf_ls and mf_sl are only ever used
+together in the kaon two-point function, and mf_ls_ww goes with them. Their
+extra files cost node-local metadata, not Lustre, until the drain.
 
 Device memory. Each contraction module frees its A2ASpatialSum buffers at the
 end of execute(), so the resident device footprint is one module's worth, the
@@ -68,19 +70,19 @@ from hadrons_xml import Job
 from vector_pool import VectorPool
 
 # A2ALoopNew low-mode sweep: fields per kernel call.
-LOOP_BLOCK = 50
+LOOP_BLOCK_LIGHT = 200
+
+# Unused with nLow = 0 -- the high-mode phase contracts N_SC fields per hit --
+# but the module rejects zero.
+LOOP_BLOCK_STRANGE = config.N_SC
 
 EMF_TYPES = "0 1 2 3"
-
-# A2ACoarseGrid records per file; each must divide its array. 14288 = 76*188,
-# 12288 = 48*256.
-SPARSE_BIN_LIGHT = 188
-SPARSE_BIN_STRANGE = 256
 
 
 def build_job(n_hit=config.N_HIT, run_id=None):
     hits = list(range(n_hit))
-    run_id = run_id or f"contraction.h{n_hit}"
+    tag = f"h{n_hit}"
+    run_id = run_id or f"contraction.{tag}"
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
               graph_file=config.GRAPH)
     pool = VectorPool(job)
@@ -99,49 +101,41 @@ def build_job(n_hit=config.N_HIT, run_id=None):
     job.add(M.load_prop(loop_c, f"{config.LOOP_ROOT}/{loop_c}",
                         format=config.PROP_IO_FORMAT))
 
-    # --- light legs, then everything that needs the unsmeared V_l ----------
-    lw = pool.combined("l", "w", hits)
-    lv = pool.combined("l", "v", hits)
+    # --- light legs and loop ----------------------------------------------
+    lw = pool.combined("l", "w", hits, tag=tag)
+    lv = pool.combined("l", "v", hits, tag=tag)
 
     loop_l = f"loop_l_h{n_hit}"
     job.add(M.a2a_loop_new(loop_l, left=lv, right=lw, n_low=config.N_LOW,
-                           block=LOOP_BLOCK))
+                           block=LOOP_BLOCK_LIGHT))
     job.add(M.write_prop(f"save_{loop_l}", prop=loop_l,
                          file=f"{config.LOOP_ROOT}/{loop_l}",
                          format=config.PROP_IO_FORMAT))
-    job.add(M.a2a_coarse_grid(
-        f"sp_l_v_h{n_hit}", SPARSE_BIN_LIGHT, lv,
-        config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
-        f"{config.SPARSE_ROOT}/l_v_h{n_hit}"))
 
-    # --- strange legs, then everything that needs the unsmeared V_s --------
-    sw = pool.combined("s", "w", hits)
-    sv = pool.combined("s", "v", hits)
+    # --- strange legs and loop ---------------------------------------------
+    sw = pool.combined("s", "w", hits, tag=tag)
+    sv = pool.combined("s", "v", hits, tag=tag)
 
     loop_s = f"loop_s_h{n_hit}"
     job.add(M.a2a_loop_new(loop_s, left=sv, right=sw, n_low=0,
-                           block=LOOP_BLOCK))
+                           block=LOOP_BLOCK_STRANGE))
     job.add(M.write_prop(f"save_{loop_s}", prop=loop_s,
                          file=f"{config.LOOP_ROOT}/{loop_s}",
                          format=config.PROP_IO_FORMAT))
-    job.add(M.a2a_coarse_grid(
-        f"sp_s_v_h{n_hit}", SPARSE_BIN_STRANGE, sv,
-        config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
-        f"{config.SPARSE_ROOT}/s_v_h{n_hit}"))
 
     # --- contractions ------------------------------------------------------
     def meson_fields(suffix, lw, lv, sw, sv):
-        def mf(field, left, right, gammas, mom, time_slice_io):
+        def mf(field, left, right, gammas, mom):
             name = f"{field}_h{n_hit}{suffix}"
             job.add(M.a2a_meson_field(name, block, block, left, right,
                                       out(name), gammas, mom,
-                                      time_slice_io=time_slice_io))
+                                      time_slice_io=True))
 
-        mf("mf_ls_ww", lw, sw, config.IDENTITY, config.KAON_MOM, False)
-        mf("mf_sl", sw, lv, config.GAMMA5, config.KAON_MOM, False)
-        mf("mf_ls", lw, sv, config.GAMMA5, config.KAON_MOM, True)
-        mf("mf_ll", lw, lv, config.IDENTITY, config.SIGMA_MOM, True)
-        mf("mf_pi", lw, lv, config.GAMMA5, config.PION_MOM, True)
+        mf("mf_ls_ww", lw, sw, config.IDENTITY, config.KAON_MOM)
+        mf("mf_sl", sw, lv, config.GAMMA5, config.KAON_MOM)
+        mf("mf_ls", lw, sv, config.GAMMA5, config.KAON_MOM)
+        mf("mf_ll", lw, lv, config.IDENTITY, config.SIGMA_MOM)
+        mf("mf_pi", lw, lv, config.GAMMA5, config.PION_MOM)
 
     def cmf(suffix, sv, lv):
         name = f"cmf_ape_h{n_hit}{suffix}"

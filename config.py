@@ -44,8 +44,13 @@ def high_filestem(flavor, hit, vw):
     return f"{VW_BASE}/{flavor}{hit}_{vw}"
 
 
+# Noise directory suffix per flavour. Charm reuses the light sources: its loop
+# enters only through the GIM subtraction against the light loop.
+NOISE_FLAVOR = {"l": "ud", "s": "s", "c": "ud"}
+
+
 def noise_filestem(flavor, hit):
-    return f"{NOISE_BASE}_{flavor}/hit00{hit}"
+    return f"{NOISE_BASE}_{NOISE_FLAVOR[flavor]}/hit00{hit}"
 
 
 # Loop propagators and sparsened vectors, beside VW_BASE on Lustre. Both are

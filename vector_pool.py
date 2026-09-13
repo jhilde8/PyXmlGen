@@ -41,21 +41,28 @@ class VectorPool:
         self._smeared = {}   # (flavor, hit, vw, width_tag) -> module name
         self._noise = {}     # (flavor, hits-tuple) -> noise module name
 
-    def noise(self, flavor, hits):
+    @staticmethod
+    def _tag(hits, tag):
+        # Names spell out the hit list unless the caller supplies a shorter
+        # tag (e.g. "h8" for all eight hits). Only the name changes; the cache
+        # keys stay on the hit list.
+        return tag if tag else "".join(f"h{h}" for h in hits)
+
+    def noise(self, flavor, hits, tag=None):
         """Raw-noise object for (flavor, hits), one file stem per hit; hit
         order of every array expanded from it is this `hits` order."""
         hits = tuple(hits)
         key = (flavor, hits)
         if key in self._noise:
             return self._noise[key]
-        name = f"noise_{flavor}_" + "".join(f"h{h}" for h in hits)
+        name = f"noise_{flavor}_{self._tag(hits, tag)}"
         stems = [config.noise_filestem(flavor, h) for h in hits]
         self.job.add(M.load_time_diluted_noise(name, stems,
                                                config.N_NOISE_PER_STEM))
         self._noise[key] = name
         return name
 
-    def combined(self, flavor, vw, hits, with_low=None):
+    def combined(self, flavor, vw, hits, with_low=None, tag=None):
         """Full A2A vector array for (flavor, vw) covering exactly `hits`:
         low modes (if any) once, then each hit's high-mode block. V is read
         expanded from disk (with 1/len(hits) on the high blocks); W is the
@@ -84,11 +91,11 @@ class VectorPool:
 
         low_filestem = config.low_filestem(flavor, vw) if has_low else ""
         suffix = "" if has_low == default_low else "_nolow"
-        name = (f"a2a_{flavor}_{vw}_" + "".join(f"h{h}" for h in hits) + suffix)
+        name = f"a2a_{flavor}_{vw}_{self._tag(hits, tag)}{suffix}"
         if vw == "w":
             self.job.add(M.load_combined_a2a_vecs_w(
                 name, config.LOW_BIN_SIZE, low_filestem,
-                config.N_LOW if has_low else 0, self.noise(flavor, hits)))
+                config.N_LOW if has_low else 0, self.noise(flavor, hits, tag)))
         else:
             high_extensions = [f"{flavor}{h}_{vw}" for h in hits]
             self.job.add(M.load_combined_a2a_vecs_v(

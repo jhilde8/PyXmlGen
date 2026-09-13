@@ -66,7 +66,6 @@ import modules as M
 from hadrons_xml import Job
 
 FLAVOR = "c"
-NOISE_FLAVOR = "ud"
 
 
 def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
@@ -83,7 +82,7 @@ def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
         w = f"w_{FLAVOR}_h{h}"
 
         job.add(M.load_time_diluted_noise(
-            noise, [config.noise_filestem(NOISE_FLAVOR, h)],
+            noise, [config.noise_filestem(FLAVOR, h)],
             config.N_NOISE_PER_STEM))
 
         job.add(M.load_combined_a2a_vecs_w(
