@@ -150,9 +150,7 @@ def build_job(hits):
               graph_file=config.GRAPH)
     pool = VectorPool(job)
 
-    # cacheBlock = block: the GPU path is fastest with the SumRing reduction
-    # untiled, one tile spanning the whole block (see config.py).
-    block = config.BLOCK
+    lb, rb = config.LEFT_BLOCK, config.RIGHT_BLOCK
 
     sv = pool.combined("s", "v", hits)
     sw = pool.combined("s", "w", hits)
@@ -170,7 +168,7 @@ def build_job(hits):
 
     mf_ls = f"mf_ls_{tag}"
     job.add(M.a2a_meson_field(
-        mf_ls, block, block, lw, sv,
+        mf_ls, lb, rb,lw, sv,
         f"{config.TMP_OUTPUT}/{mf_ls}", config.GAMMA5, config.KAON_MOM,
         time_slice_io=True))
     # W_l is dead here, and V_l is loaded next rather than above so that the
@@ -180,14 +178,14 @@ def build_job(hits):
 
     emf_name = f"emf_sloop_{tag}"
     job.add(M.a2a_extended_meson_field(
-        emf_name, block, block, EMF_TYPES, left=sv, right=lv,
+        emf_name, lb, rb,EMF_TYPES, left=sv, right=lv,
         output=f"{config.TMP_OUTPUT}/{emf_name}",
         gammas1=config.EMF_GAMMA_FAMILIES, gammas2=config.EMF_GAMMA_FAMILIES,
         loop=loop_s, time_slice_io=True))
 
     cmf_name = f"cmf_ape_{tag}"
     job.add(M.a2a_chromomagnetic_operator_field(
-        cmf_name, block, block, config.CMO_PARITIES, sv, lv, "gauge_APE",
+        cmf_name, lb, rb,config.CMO_PARITIES, sv, lv, "gauge_APE",
         f"{config.TMP_OUTPUT}/{cmf_name}", config.CMO_IF_ORTHOGS,
         time_slice_io=True))
 
@@ -195,7 +193,7 @@ def build_job(hits):
     # renormalization. Same legs, one gamma, zero momentum.
     mix_name = f"mix_{tag}"
     job.add(M.a2a_meson_field(
-        mix_name, block, block, sv, lv,
+        mix_name, lb, rb,sv, lv,
         f"{config.TMP_OUTPUT}/{mix_name}", config.IDENTITY, config.ZERO_MOM,
         time_slice_io=True))
 

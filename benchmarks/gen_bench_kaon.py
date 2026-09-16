@@ -80,13 +80,9 @@ def build_job(hits):
               graph_file=config.GRAPH)
     pool = VectorPool(job)
 
-    # cacheBlock = block: the GPU path is fastest with the SumRing reduction
-    # untiled, one tile spanning the whole block (see config.py).
-    block = config.BLOCK
-
     def mf(name, left, right, gammas):
         job.add(M.a2a_meson_field(
-            name, block, block, left, right,
+            name, config.LEFT_BLOCK, config.RIGHT_BLOCK, left, right,
             f"{config.TMP_OUTPUT}/{name}", gammas, config.KAON_MOM))
 
     # W_l first: it is the left leg of both mf_ls and mf_ls_ww, so it has to

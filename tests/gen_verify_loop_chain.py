@@ -95,7 +95,8 @@ LOOP_BLOCK = 50
 TYPES = "0"
 GAMMAS = "Gamma5"
 
-EMF_BLOCK = config.BLOCK
+EMF_LEFT_BLOCK = config.LEFT_BLOCK
+EMF_RIGHT_BLOCK = config.RIGHT_BLOCK
 
 # Merged layout (one file per type/gamma pair), which is what diffs/diff_a2am.py
 # reads. The per-timeslice layout would need diff_a2am_ts.py and buys nothing
@@ -140,7 +141,7 @@ def build_job():
     # Identical in every respect but the loop they are handed.
     for name, loop in (("emf_full", "loop_full"), ("emf_chain", link)):
         job.add(M.a2a_extended_meson_field(
-            name, EMF_BLOCK, EMF_BLOCK, TYPES, left=v_all, right=v_all,
+            name, EMF_LEFT_BLOCK, EMF_RIGHT_BLOCK, TYPES, left=v_all, right=v_all,
             output=f"{config.TMP_OUTPUT}/{name}", gammas1=GAMMAS,
             gammas2=GAMMAS, loop=loop, time_slice_io=EMF_TS_IO))
 

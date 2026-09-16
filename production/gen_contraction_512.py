@@ -1,7 +1,8 @@
 """Single contraction job: every meson field for one configuration at N_HIT hits.
 
-512 nodes, --mpi 8.8.8.8, local [8,8,8,16], ntOut 16, block = cacheBlock =
-config.BLOCK.
+512 nodes, --mpi 8.8.8.8, local [8,8,8,16], ntOut 16. No blocking on the left:
+every field's leftBlock is its left leg's full mode count, so the left leg is
+packed once per module, and rightBlock = config.RIGHT_BLOCK.
 
 Everything except the charm loop runs here. At 512 nodes a field is 1.5 MiB per
 rank and all four legs fit at once, so nothing is tiled:
@@ -26,9 +27,10 @@ Schedule (module order == schedule order):
     noise_s, W_s, V_s                vector peak from here on
     loop_s, save
     mf_ls_ww, mf_sl, mf_ls, mf_ll, mf_pi              unsmeared
-    emf_sloop, emf_lloop, emf_cloop, cmf_ape, mix     unsmeared
+    emf_sloop, emf_lloop, emf_cloop                   unsmeared
+    cmf (gauge), cmf_ape (gauge_APE), mix             unsmeared
     smear V_s, V_l, W_l, W_s
-    mf_ls_ww, mf_sl, mf_ls, mf_ll, mf_pi, cmf_ape     smeared
+    mf_ls_ww, mf_sl, mf_ls, mf_ll, mf_pi              smeared
 
 A2ACovariantSmear moves its source and leaves it empty, so every consumer of
 an unsmeared array -- the loops and the unsmeared contractions -- is scheduled
@@ -54,9 +56,11 @@ together in the kaon two-point function, and mf_ls_ww goes with them. Their
 extra files cost node-local metadata, not Lustre, until the drain.
 
 Device memory. Each contraction module frees its A2ASpatialSum buffers at the
-end of execute(), so the resident device footprint is one module's worth, the
-27-momentum pion at ~11 GiB per rank, plus the Grid view cache set by
---device-mem.
+end of execute(), so the resident device footprint is one module's worth plus
+the Grid view cache set by --device-mem. With the whole left leg packed, the
+largest are the V_s-left fields (EMF, CMF, mix) at ~20 GiB per rank -- 18.2 of
+it the packed V_s -- and the pion at ~20.5 GiB, so keep --device-mem near
+16000.
 """
 import sys
 from pathlib import Path
@@ -88,7 +92,12 @@ def build_job(n_hit=config.N_HIT, run_id=None):
     pool = VectorPool(job)
     (width,) = config.SMEAR_WIDTHS
     width_tag, alpha, N = width
-    block = config.BLOCK
+
+    # leftBlock per left leg: the whole leg, i.e. no left blocking.
+    rb = config.RIGHT_BLOCK
+    n_lw = config.leg_size("l", "w", n_hit)
+    n_sw = config.leg_size("s", "w", n_hit)
+    n_sv = config.leg_size("s", "v", n_hit)
 
     def out(name):
         return f"{config.TMP_OUTPUT}/{name}"
@@ -125,38 +134,37 @@ def build_job(n_hit=config.N_HIT, run_id=None):
 
     # --- contractions ------------------------------------------------------
     def meson_fields(suffix, lw, lv, sw, sv):
-        def mf(field, left, right, gammas, mom):
+        def mf(field, left, n_left, right, gammas, mom):
             name = f"{field}_h{n_hit}{suffix}"
-            job.add(M.a2a_meson_field(name, block, block, left, right,
+            job.add(M.a2a_meson_field(name, n_left, rb, left, right,
                                       out(name), gammas, mom,
                                       time_slice_io=True))
 
-        mf("mf_ls_ww", lw, sw, config.IDENTITY, config.KAON_MOM)
-        mf("mf_sl", sw, lv, config.GAMMA5, config.KAON_MOM)
-        mf("mf_ls", lw, sv, config.GAMMA5, config.KAON_MOM)
-        mf("mf_ll", lw, lv, config.IDENTITY, config.SIGMA_MOM)
-        mf("mf_pi", lw, lv, config.GAMMA5, config.PION_MOM)
-
-    def cmf(suffix, sv, lv):
-        name = f"cmf_ape_h{n_hit}{suffix}"
-        job.add(M.a2a_chromomagnetic_operator_field(
-            name, block, block, config.CMO_PARITIES, sv, lv, "gauge_APE",
-            out(name), config.CMO_IF_ORTHOGS, time_slice_io=True))
+        mf("mf_ls_ww", lw, n_lw, sw, config.IDENTITY, config.KAON_MOM)
+        mf("mf_sl",    sw, n_sw, lv, config.GAMMA5,   config.KAON_MOM)
+        mf("mf_ls",    lw, n_lw, sv, config.GAMMA5,   config.KAON_MOM)
+        mf("mf_ll",    lw, n_lw, lv, config.IDENTITY, config.SIGMA_MOM)
+        mf("mf_pi",    lw, n_lw, lv, config.GAMMA5,   config.PION_MOM)
 
     meson_fields("", lw, lv, sw, sv)
 
     for flavor, loop in (("s", loop_s), ("l", loop_l), ("c", loop_c)):
         name = f"emf_{flavor}loop_h{n_hit}"
         job.add(M.a2a_extended_meson_field(
-            name, block, block, EMF_TYPES, left=sv, right=lv, output=out(name),
+            name, n_sv, rb, EMF_TYPES, left=sv, right=lv, output=out(name),
             gammas1=config.EMF_GAMMA_FAMILIES,
             gammas2=config.EMF_GAMMA_FAMILIES,
             loop=loop, time_slice_io=True))
 
-    cmf("", sv, lv)
+    # Both on the unsmeared legs; they differ only in the links in the operator.
+    for field, gauge in (("cmf", "gauge"), ("cmf_ape", "gauge_APE")):
+        name = f"{field}_h{n_hit}"
+        job.add(M.a2a_chromomagnetic_operator_field(
+            name, n_sv, rb, config.CMO_PARITIES, sv, lv, gauge,
+            out(name), config.CMO_IF_ORTHOGS, time_slice_io=True))
 
     mix = f"mix_h{n_hit}"
-    job.add(M.a2a_meson_field(mix, block, block, sv, lv, out(mix),
+    job.add(M.a2a_meson_field(mix, n_sv, rb, sv, lv, out(mix),
                               config.IDENTITY, config.ZERO_MOM,
                               time_slice_io=True))
 
@@ -174,7 +182,6 @@ def build_job(n_hit=config.N_HIT, run_id=None):
     sw_sm = smear(sw)
 
     meson_fields(f"_{width_tag}", lw_sm, lv_sm, sw_sm, sv_sm)
-    cmf(f"_{width_tag}", sv_sm, lv_sm)
 
     return job, run_id
 

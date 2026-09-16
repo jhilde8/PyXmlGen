@@ -64,8 +64,7 @@ as a check that the contraction cost really is independent of whether its
 input vectors were smeared (the smear leaves the array shapes untouched, so
 the table above is unchanged either way).
 
-block is config.BLOCK for all four fields, matching production. cacheBlock =
-block throughout (GPU path, untiled SumRing).
+leftBlock/rightBlock are config.LEFT_BLOCK/RIGHT_BLOCK for all four fields.
 
 timeSliceIO is on for the light-light pair and off for the kaon pair. It
 skips the temporal all-gather and writes one file per (momentum, gamma,
@@ -182,7 +181,7 @@ def build_job(hits, width):
 
     def mf(name, left, right, gammas, mom, time_slice_io):
         job.add(M.a2a_meson_field(
-            name, config.BLOCK, config.BLOCK, left, right,
+            name, config.LEFT_BLOCK, config.RIGHT_BLOCK, left, right,
             f"{config.TMP_OUTPUT}/{name}", gammas, mom,
             time_slice_io=time_slice_io))
 

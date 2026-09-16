@@ -71,8 +71,8 @@ EXT_HIGH = 2 * config.HIGH_BIN_SIZE
 TYPES = "0"
 GAMMAS = "GammaMUGamma5 GammaMU"
 
-EMF_BLOCK = config.BLOCK
-EMF_CACHE_BLOCK = EMF_BLOCK
+EMF_LEFT_BLOCK = config.LEFT_BLOCK
+EMF_RIGHT_BLOCK = config.RIGHT_BLOCK
 
 
 def low_stem(flavor, vw):
@@ -149,7 +149,7 @@ def build_job(flavor, hits, block=LOOP_BLOCK):
             ("exp",   dict(loop=loop_exp)),
             ("dense", dict(loop=loop_dense))):
         job.add(M.a2a_extended_meson_field(
-            f"emf_{rung}_{tag}", EMF_BLOCK, EMF_CACHE_BLOCK, TYPES,
+            f"emf_{rung}_{tag}", EMF_LEFT_BLOCK, EMF_RIGHT_BLOCK, TYPES,
             left=ext["s"], right=ext["l"], output=f"emf_verify/{tag}/{rung}",
             gammas1=GAMMAS, gammas2=GAMMAS, **kwargs))
 

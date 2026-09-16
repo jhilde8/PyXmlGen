@@ -35,6 +35,15 @@ N_SC = 12
 FLAVOR_HAS_LOW = {"l": True, "s": False, "c": False}
 
 
+def leg_size(flavor, vw, n_hit):
+    """Mode count of the combined (flavor, vw) array at n_hit hits: the low
+    modes if the flavor has any, then N_HIGH expanded V or N_SC dense W per
+    hit. At 8 hits: l_v 14288, l_w 2096, s_v/c_v 12288, s_w/c_w 96."""
+    low = N_LOW if FLAVOR_HAS_LOW[flavor] else 0
+    high = N_HIGH if vw == "v" else N_SC
+    return low + high * n_hit
+
+
 def low_filestem(flavor, vw):
     assert FLAVOR_HAS_LOW[flavor]
     return f"{LOW_VW}/{flavor}_lo_{vw}"
@@ -112,24 +121,20 @@ SMEAR_WIDTHS = [
 ]
 ORTHOG_AXIS = 3
 
-# --- block / cacheBlock rules ---------------------------------------------
-# block: modes per GEMM side, the same for every A2AMesonField,
+# --- block rules -----------------------------------------------------------
+# leftBlock / rightBlock: modes per GEMM side for every A2AMesonField,
 # A2AExtendedMesonField and A2AChromoMagneticOperatorField. 256 over 128 was
 # measured on 32^3x64 at the 256- and 512-node local volumes: the spatial
 # reduce is unchanged (its wire bytes do not depend on block), while the
 # per-block costs -- file open/close, Pack, and at the 512-node local volume
 # the GEMM -- all drop.
-BLOCK = 256
-
-# cacheBlock tiles the SumRing reduction. Since the A2ASpatialSum rework the
-# GPU path is fastest with no tiling at all -- one tile spanning the whole
-# block -- so GPU jobs pass cacheBlock = block and none of the constants below
-# are referenced by the generators. They are the CPU tile sizes, kept because
-# the same generators serve both builds: on a CPU build the tile is for cache
-# locality and wants to be small. Pointing a generator back at CPU means
-# putting one of these in its cacheBlock argument by hand.
-CB_CPU_MF = 16          # A2AMesonField
-CB_CPU_EMF_CMOF = 32    # A2AExtendedMesonField, A2AChromoMagneticOperatorField
+#
+# A left block at least as large as the left leg packs that leg once for the
+# whole module; generators may override LEFT_BLOCK per field for that. The
+# HDF5 chunk is the smaller block among the sides actually split, so keep the
+# larger a multiple of it.
+LEFT_BLOCK = 256
+RIGHT_BLOCK = 256
 
 # --- gauge (for CMO / EMF-adjacent smearing) -------------------------------
 GAUGE_FILE = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/configs/ckpoint_lat"
