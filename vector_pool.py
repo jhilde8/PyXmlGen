@@ -62,7 +62,7 @@ class VectorPool:
         self._noise[key] = name
         return name
 
-    def combined(self, flavor, vw, hits, with_low=None, tag=None):
+    def combined(self, flavor, vw, hits, with_low=None, tag=None, exact=False):
         """Full A2A vector array for (flavor, vw) covering exactly `hits`:
         low modes (if any) once, then each hit's high-mode block. V is read
         expanded from disk (with 1/len(hits) on the high blocks); W is the
@@ -77,38 +77,50 @@ class VectorPool:
         Passing True for a flavor with no low modes is an error rather than
         a silent no-op. Note this does not touch the 1/nHit factor, which is
         still len(hits) -- a tile of a larger calculation needs the global
-        hit count there, not the tile's."""
+        hit count there, not the tile's.
+
+        exact reads the high modes from the exact solve tree instead of the
+        sloppy one, for the AMA correction hit. It applies to V only -- W is
+        the raw noise, identical in both sets, so one W array serves both
+        accuracies -- and renames the array '..._exact'. The low-mode block is
+        the same eigen-derived files either way."""
         hits = tuple(hits)
+        if exact and vw != "v":
+            raise ValueError(
+                f"exact=True for a '{vw}' array: only V has an exact solve, "
+                f"W is the shared noise")
         default_low = config.FLAVOR_HAS_LOW[flavor]
         has_low = default_low if with_low is None else bool(with_low)
         if has_low and not default_low:
             raise ValueError(
                 f"with_low=True for flavor '{flavor}', which has no low modes "
                 f"(config.FLAVOR_HAS_LOW)")
-        key = (flavor, vw, hits, has_low)
+        key = (flavor, vw, hits, has_low, exact)
         if key in self._combined:
             return self._combined[key]
 
         low_filestem = config.low_filestem(flavor, vw) if has_low else ""
         suffix = "" if has_low == default_low else "_nolow"
+        suffix += "_exact" if exact else ""
         name = f"a2a_{flavor}_{vw}_{self._tag(hits, tag)}{suffix}"
         if vw == "w":
             self.job.add(M.load_combined_a2a_vecs_w(
                 name, config.LOW_BIN_SIZE, low_filestem,
                 config.N_LOW if has_low else 0, self.noise(flavor, hits, tag)))
         else:
-            high_extensions = [f"{flavor}{h}_{vw}" for h in hits]
+            high_extensions = [config.high_extension(flavor, h, vw, exact)
+                               for h in hits]
             self.job.add(M.load_combined_a2a_vecs_v(
                 name, low_filestem, config.N_LOW if has_low else 0,
-                f"{config.VW_BASE}/", high_extensions, config.N_HIGH,
+                config.high_stem(exact), high_extensions, config.N_HIGH,
                 config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=len(hits)))
         self._combined[key] = name
         return name
 
-    def base(self, flavor, hit, vw, with_low=None):
+    def base(self, flavor, hit, vw, with_low=None, exact=False):
         """Full A2A vector array for (flavor, hit, vw) -- single-hit case
         of combined()."""
-        return self.combined(flavor, vw, [hit], with_low=with_low)
+        return self.combined(flavor, vw, [hit], with_low=with_low, exact=exact)
 
     def smeared(self, flavor, hit, vw, width_tag, alpha, N):
         """Smeared version of base(flavor, hit, vw) at the given width.

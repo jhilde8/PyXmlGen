@@ -101,15 +101,15 @@ def build_job(flavor, hits, block=LOOP_BLOCK):
     for f in ("l", "s"):
         ext[f] = f"a2a_{f}_v_ext_{tag}"
         job.add(M.load_combined_a2a_vecs_v(
-            ext[f], low_stem(f, "v"), low_size(f, EXT_LOW), f"{config.VW_BASE}/",
-            [f"{f}{h}_v" for h in hits], EXT_HIGH,
+            ext[f], low_stem(f, "v"), low_size(f, EXT_LOW), config.high_stem(),
+            [config.high_extension(f, h, "v") for h in hits], EXT_HIGH,
             config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=0))
 
     # --- the loop's mode arrays, full size by necessity ------------------
     v_loop = f"a2a_{flavor}_v_loop_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        v_loop, low_stem(flavor, "v"), n_low, f"{config.VW_BASE}/",
-        [f"{flavor}{h}_v" for h in hits], config.N_HIGH,
+        v_loop, low_stem(flavor, "v"), n_low, config.high_stem(),
+        [config.high_extension(flavor, h, "v") for h in hits], config.N_HIGH,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=0))
 
     # Expanded W read straight from the stored w files, so this leg shares no
@@ -118,8 +118,8 @@ def build_job(flavor, hits, block=LOOP_BLOCK):
     # with the noise. gen_verify_dense_ww.py covers the latter on its own.
     w_exp = f"a2a_{flavor}_w_exp_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        w_exp, low_stem(flavor, "w"), n_low, f"{config.VW_BASE}/",
-        [f"{flavor}{h}_w" for h in hits], config.N_HIGH,
+        w_exp, low_stem(flavor, "w"), n_low, config.high_stem(),
+        [config.high_extension(flavor, h, "w") for h in hits], config.N_HIGH,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=0))
 
     noise = f"noise_{flavor}_{tag}"

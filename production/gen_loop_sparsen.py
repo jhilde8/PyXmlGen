@@ -153,8 +153,8 @@ def add_flavor(job, flavor, n_hit, sparsen, sparse_root=SPARSE_ROOT):
         # n_hit=len(hits) and so cannot be used for a per-hit load.)
         job.add(M.load_combined_a2a_vecs_v(
             v, low_filestem="", n_low=0,
-            high_stem=f"{config.VW_BASE}/",
-            high_extensions=[f"{flavor}{h}_v"],
+            high_stem=config.high_stem(),
+            high_extensions=[config.high_extension(flavor, h, "v")],
             high_size=config.N_HIGH,
             low_bin_size=config.LOW_BIN_SIZE,
             high_bin_size=config.HIGH_BIN_SIZE, n_hit=n_hit))

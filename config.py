@@ -7,6 +7,14 @@ from pathlib import Path
 
 N_HIT = 8
 
+# AMA correction hit: one sloppy hit beyond the production set, plus an exact
+# solve on the same noise. Taking the correction from its own hit keeps it
+# uncorrelated with the sloppy observable it corrects, and one exact hit on
+# every configuration reaches the exact-to-sloppy ratio the 48I campaign gets
+# from exact solves on 10% of its configurations. Both carry hit index N_HIT --
+# same noise stem, different vector tree (VW_SLOPPY / VW_EXACT).
+AMA_HIT = N_HIT
+
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
 VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
@@ -17,10 +25,15 @@ N_LOW = 2000
 LOW_BIN_SIZE = 200
 LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
 
-# High modes: per flavor, per hit, 12 files x 128 vectors, filestem
-# "<VW_BASE>/<flavor><hit>_v" / "<flavor><hit>_w".
+# High modes: per flavor, per hit, 12 files x 128 vectors. The tree is split by
+# solve accuracy: every sloppy hit under VW_SLOPPY as "<flavor><hit>_v" /
+# "<flavor><hit>_w", and the AMA hit's exact solve under VW_EXACT as
+# "<flavor><hit>_exact". The binned loaders take a stem and one extension per
+# hit, which is what high_stem() and high_extension() below produce.
 N_HIGH = 1536
 HIGH_BIN_SIZE = 128
+VW_SLOPPY = f"{VW_BASE}/sloppy"
+VW_EXACT = f"{VW_BASE}/exact"
 
 # Raw noise (dense W path): one file per flavor per hit holding the single
 # ComplexField that generates that hit's sources
@@ -49,8 +62,20 @@ def low_filestem(flavor, vw):
     return f"{LOW_VW}/{flavor}_lo_{vw}"
 
 
-def high_filestem(flavor, hit, vw):
-    return f"{VW_BASE}/{flavor}{hit}_{vw}"
+def high_stem(exact=False):
+    """Directory the binned V/W loaders prepend to each hit's extension."""
+    return f"{VW_EXACT}/" if exact else f"{VW_SLOPPY}/"
+
+
+def high_extension(flavor, hit, vw="v", exact=False):
+    """One hit's high-mode block under high_stem(exact). The exact solve is a V
+    only: W is the raw noise, which the sloppy and exact sets share."""
+    if exact:
+        if vw != "v":
+            raise ValueError(
+                f"no exact W files for '{flavor}{hit}': W is the shared noise")
+        return f"{flavor}{hit}_exact"
+    return f"{flavor}{hit}_{vw}"
 
 
 # Noise directory suffix per flavour. Charm reuses the light sources: its loop

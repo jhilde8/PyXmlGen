@@ -90,8 +90,8 @@ def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
 
         job.add(M.load_combined_a2a_vecs_v(
             v, low_filestem="", n_low=0,
-            high_stem=f"{config.VW_BASE}/",
-            high_extensions=[f"{FLAVOR}{h}_v"],
+            high_stem=config.high_stem(),
+            high_extensions=[config.high_extension(FLAVOR, h, "v")],
             high_size=config.N_HIGH,
             low_bin_size=config.LOW_BIN_SIZE,
             high_bin_size=config.HIGH_BIN_SIZE, n_hit=n_hit))

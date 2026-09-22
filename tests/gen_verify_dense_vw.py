@@ -50,14 +50,14 @@ def build_job(hits):
 
     v_trunc = f"a2a_{FLAVOR}_v_trunc_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        v_trunc, f"{config.LOW_VW}", LOW_TRUNC, f"{config.VW_BASE}/",
-        [f"{FLAVOR}{h}_v" for h in hits], HIGH_TRUNC,
+        v_trunc, f"{config.LOW_VW}", LOW_TRUNC, config.high_stem(),
+        [config.high_extension(FLAVOR, h, "v") for h in hits], HIGH_TRUNC,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
 
     w_exp = f"a2a_{FLAVOR}_w_exp_{tag}"
     job.add(M.load_combined_a2a_vecs_v(
-        w_exp, f"{config.LOW_VW}", LOW_TRUNC, f"{config.VW_BASE}/",
-        [f"{FLAVOR}{h}_w" for h in hits], HIGH_TRUNC,
+        w_exp, f"{config.LOW_VW}", LOW_TRUNC, config.high_stem(),
+        [config.high_extension(FLAVOR, h, "w") for h in hits], HIGH_TRUNC,
         config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE))
 
     noise = f"noise_{FLAVOR}_{tag}"

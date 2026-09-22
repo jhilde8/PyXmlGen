@@ -108,8 +108,8 @@ def load_chunks(job, name, hits):
     """One array holding CHUNK modes from each hit in `hits`, in that order."""
     job.add(M.load_combined_a2a_vecs_v(
         name, low_filestem="", n_low=0,
-        high_stem=f"{config.VW_BASE}/",
-        high_extensions=[f"{TEST_FLAVOR}{h}_v" for h in hits],
+        high_stem=config.high_stem(),
+        high_extensions=[config.high_extension(TEST_FLAVOR, h, "v") for h in hits],
         high_size=CHUNK,
         low_bin_size=config.LOW_BIN_SIZE,
         high_bin_size=config.HIGH_BIN_SIZE, n_hit=NO_NORM))
