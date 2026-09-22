@@ -50,10 +50,14 @@ def load_combined_a2a_vecs_w(name, low_bin_size, low_filestem, n_low, noise):
 
 
 def a2a_high_mode_v_binned(name, bin_size, noise, action, solver, output,
-                            multi_file=True):
+                            multi_file=True, init_bin=0, n_bin=0):
+    # init_bin/n_bin: compute bins [init_bin, init_bin + n_bin) of the hit, to
+    # split a hit across jobs or resume one; n_bin=0 means through the last
+    # bin. Any partial range needs multi_file=True (the module rejects it
+    # otherwise). Defaults compute the whole hit.
     return module(name, f"MSolver::A2AHighModeVBinned{bin_size}",
                   noise=noise, action=action, solver=solver, output=output,
-                  multiFile=multi_file)
+                  multiFile=multi_file, initBin=init_bin, nBin=n_bin)
 
 
 def a2a_low_mode_coarse_binned(name, n_basis, bin_size, eigen_pack, action,
