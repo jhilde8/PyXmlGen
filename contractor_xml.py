@@ -41,7 +41,28 @@ def _elem(parent, **fields):
 def global_par(nt, disk_vector_dir, output, traj_start, traj_end, traj_step=1,
                n_hit=None):
     """The <global> block. n_hit is the hit count every dense field in the par
-    file shares, and setting it selects the ContractorDense schema."""
+    file shares, and setting it selects the ContractorDense schema.
+
+    The two directories have opposite requirements, both of them traps:
+
+      output          MUST already exist. saveCorrelator calls
+                      makeFileDir(dir), but makeFileDir creates dirname() of
+                      what it is handed -- so passing the output directory
+                      creates its PARENT and never the directory itself, and
+                      ResultWriter then fails to create a file inside a
+                      directory nobody made. Create it in the submission
+                      script. Affects Contractor, ContractorDense,
+                      FlexibleContractor and BubbleContractor alike, since
+                      they share saveCorrelator.
+
+      diskVectorDir   its per-matrix subdirectory, <diskVectorDir>/<name>,
+                      must NOT exist. DiskVectorBase hard-errors on a
+                      pre-existing one (DiskVector.hpp:274-283) before
+                      creating it, deliberately, since it wipes what it owns.
+                      Hadrons::mkdir is create_directories, so the parent
+                      chain comes for free -- only the leaf must be absent.
+                      A crashed run therefore needs it removed before a retry.
+    """
     el = ET.Element("global")
     traj = ET.SubElement(el, "trajCounter")
     ET.SubElement(traj, "start").text = str(traj_start)
@@ -55,7 +76,7 @@ def global_par(nt, disk_vector_dir, output, traj_start, traj_end, traj_step=1,
     return el
 
 
-def a2a_matrix(file, dataset, name, cache_size, n_low=None):
+def a2a_matrix(file, dataset, name, cache_size, n_low=None, time_slice_io=False):
     """One <a2aMatrix> entry. `file` carries the @traj@ token; `dataset` is the
     HDF5 group, which for a meson field is the ioname that A2AMesonField built
     from the gamma and momentum (the dataset inside it is always a2aMatrix).
@@ -63,12 +84,19 @@ def a2a_matrix(file, dataset, name, cache_size, n_low=None):
     n_low is the low-mode count of this field's DENSE (row) axis only. Its
     column axis belongs to the other term of the contraction, and is checked
     against that term's mode space at run time -- so one value per matrix both
-    suffices and cross-checks the pairing."""
+    suffices and cross-checks the pairing.
+
+    time_slice_io says the field was written one file per timeslice, in which
+    case `file` is still the whole-field path and the contractor inserts
+    ".t%04d" before the .h5 the way A2AMesonField's filenameFn does. Both it
+    and n_low belong to the ContractorDense schema, so they are emitted
+    together or not at all."""
     el = ET.Element("elem")
     _add_option(el, "file", file)
     _add_option(el, "dataset", dataset)
     _add_option(el, "cacheSize", cache_size)
     if n_low is not None:
+        _add_option(el, "timeSliceIO", bool(time_slice_io))
         _add_option(el, "nLow", n_low)
     _add_option(el, "name", name)
     return el
@@ -106,11 +134,17 @@ class ContractorJob:
         self._matrices = {}
         self._products = []
 
-    def add_matrix(self, file, dataset, name, cache_size, n_low=None):
+    def add_matrix(self, file, dataset, name, cache_size, n_low=None,
+                   time_slice_io=False):
         if name in self._matrices:
             raise ValueError(f"duplicate a2aMatrix name '{name}'")
+        if time_slice_io and not str(file).endswith(".h5"):
+            raise ValueError(
+                f"timeSliceIO file '{file}' must end in .h5; the contractor "
+                f"inserts .t%04d before that suffix")
         self._matrices[name] = n_low
-        self.matrices_el.append(a2a_matrix(file, dataset, name, cache_size, n_low))
+        self.matrices_el.append(a2a_matrix(file, dataset, name, cache_size,
+                                           n_low, time_slice_io))
         return name
 
     def add_product(self, terms, times, translations, translation_average=True):

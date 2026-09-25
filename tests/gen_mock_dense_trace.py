@@ -40,8 +40,14 @@ from contractor_xml import ContractorJob
 # exercised, nHit > 1 so the hit stride is, nt > 2 so a wrong timeslice cannot
 # coincide with a right one.
 N_LOW = 4
-N_SC = 3
-N_T = 4
+# Must equal Ns*Nc: ContractorDense takes nSc as a compile-time constant, not a
+# par field, so a test picking its own value simply disagrees with the binary.
+N_SC = 12
+# Must exceed Grid's _Grid_dataset_threshold (default 6, HDF5_DEF_DATASET_THRES).
+# Hdf5Writer inlines a vector as an ATTRIBUTE at or below the threshold and
+# writes a dataset above it, so a shorter correlator would be stored somewhere
+# production never puts it and the checker would need both paths.
+N_T = 8
 N_HIT = 2
 
 TRAJ = 0
@@ -57,6 +63,10 @@ N_EXPANDED = N_LOW + N_HIT * N_T * N_SC
 # (Grid/serialisation/Hdf5Type.h). The layout matches complex128 but the member
 # names differ from h5py's default, so spell the dtype out.
 CPLX = np.dtype([("re", "<f8"), ("im", "<f8")])
+
+# Root-group attribute every Grid HDF5 file carries (HDF5_GRID_GUARD +
+# "dataset_threshold"); Hdf5Reader refuses to open a file lacking it.
+GRID_DATASET_THRESHOLD_ATTR = "_Grid_dataset_threshold"
 
 
 def expand(d, t):
@@ -108,20 +118,35 @@ def correlator_dense(dense):
 
 
 def write_field(path, array):
+    """One file holding all nt timeslices (timeSliceIO false)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = np.empty(array.shape, dtype=CPLX)
     rec["re"] = array.real
     rec["im"] = array.imag
     with h5py.File(path, "w") as f:
+        # Hdf5Writer stamps this on the root group and Hdf5Reader's constructor
+        # reads it back unconditionally (Grid/serialisation/Hdf5IO.cc:45,100),
+        # so a file without it cannot be opened by any Grid tool at all. The
+        # value is Grid's own default, HDF5_DEF_DATASET_THRES.
+        f.attrs.create(GRID_DATASET_THRESHOLD_ATTR, 6, dtype="<u4")
         f.create_group(DATASET).create_dataset("a2aMatrix", data=rec)
 
 
-def build_par(tag, n_low=None, n_hit=None):
+def write_field_by_timeslice(stem, array):
+    """One file per timeslice, named as A2AMesonField's filenameFn does:
+    the .h5 stem with .t%04d inserted, each holding a (1, ni, nj) dataset."""
+    stem = Path(stem)
+    for t in range(array.shape[0]):
+        write_field(stem.with_suffix(f".t{t:04d}.h5"), array[t:t + 1])
+
+
+def build_par(tag, n_low=None, n_hit=None, time_slice_io=False, field=None):
     job = ContractorJob(nt=N_T, disk_vector_dir=f"{OUT_DIR}/dv.{tag}",
                         output=f"{OUT_DIR}/corr.{tag}",
                         traj_start=TRAJ, traj_end=TRAJ + 1, n_hit=n_hit)
-    job.add_matrix(file=f"{OUT_DIR}/{tag}.@traj@.h5", dataset=DATASET,
-                   name="mf", cache_size=N_T, n_low=n_low)
+    job.add_matrix(file=f"{OUT_DIR}/{field or tag}.@traj@.h5", dataset=DATASET,
+                   name="mf", cache_size=N_T, n_low=n_low,
+                   time_slice_io=time_slice_io)
     job.add_product(terms=["mf", "mf"], times=["0"],
                     translations=f"0..{N_T - 1}", translation_average=True)
     return job.write(OUT_DIR / f"par.mock.{tag}.xml")
@@ -144,14 +169,17 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     write_field(OUT_DIR / f"expanded.{TRAJ}.h5", expanded)
     write_field(OUT_DIR / f"dense.{TRAJ}.h5", dense)
+    write_field_by_timeslice(OUT_DIR / f"densets.{TRAJ}.h5", dense)
     par_exp = build_par("expanded")
     par_den = build_par("dense", n_low=N_LOW, n_hit=N_HIT)
+    par_dts = build_par("densets", n_low=N_LOW, n_hit=N_HIT, time_slice_io=True)
     np.save(OUT_DIR / "correlator.npy", c_exp)
 
     print(f"\nwrote fields, par files and correlator.npy to {OUT_DIR}")
     print(f"\n  HadronsContractor {par_exp}")
     print(f"  ContractorDense   {par_den}")
-    print("\nboth must reproduce:")
+    print(f"  ContractorDense   {par_dts}")
+    print("\nall three must reproduce:")
     for t, v in enumerate(c_exp):
         print(f"  t={t}  {v.real:+.10e} {v.imag:+.10e}")
     return 0
