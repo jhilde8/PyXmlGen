@@ -207,3 +207,24 @@ def schedule_file(run_id):
     """Absolute path Hadrons should read this job's schedule from at runtime."""
     return f"{XML_DIR}/schedule.{run_id}.txt"
 
+
+# --- contraction stage (Riker) ---------------------------------------------
+# Where the meson fields come to rest after the drain off Frontier's node-local
+# NVMe. A2AMesonField writes "<output>.<traj>/<ioname>.h5", or with
+# timeSliceIO "<output>.<traj>/<ioname>.t%04d.h5", so a field lives at
+# <MF_BASE>/<stem>.<traj>/ and the contractor gets the whole-field path with
+# @traj@ still in it.
+MF_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/mf"
+
+# The AMA correction hit: one extra sloppy hit plus its exact solve. Same
+# layout, different tree, and the fields there are 1-hit -- so a par file
+# contracting them needs nHit = 1, not N_HIT. See [[project_ama_correction_hit]].
+MF_AMA_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/mf_ama"
+
+# Correlators, and the contractor's own scratch. diskVectorDir is only written
+# to when a field spills its cache (DiskVectorBase::evict fires at
+# index.size() >= cacheSize), so with cacheSize = N_T it stays empty -- but the
+# directory is still created, and it must be per-process, since the contractor
+# refuses a pre-existing <diskVectorDir>/<matrix name>.
+CONTRACTION_ROOT = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/A2AContractions"
+
