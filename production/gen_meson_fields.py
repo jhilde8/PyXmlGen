@@ -5,6 +5,8 @@
     gen_meson_fields.py ama                      the correction hit, both ways
     gen_meson_fields.py h8 --hits 0 1 2 4 5 6 7 8   the eight hits that exist
     gen_meson_fields.py ama --load-loops         restart: read the loops back
+    gen_meson_fields.py h8 --smeared-only         both widths, no svlv
+    gen_meson_fields.py h8 --width w2p03_n11      stop at the narrow rung
 
 The tag names the job and carries the hit count, so the two cannot disagree.
 Everything below is common to both kinds of job; the tag decides only which
@@ -73,6 +75,25 @@ production/gen_charm_loop.py builds it on a node count set by one hit of V
 rather than spending this job's nodes on a pure-IO step, and that job has to
 finish first.
 
+Smearing. config.SMEAR_LADDER is a ladder of increments, not a catalogue of
+widths: each rung smears the arrays the previous rung produced, and the job
+climbs it, contracting at every rung. So one job yields every width at the cost
+of one vector load, which is the whole point -- a second width as its own job
+would pay that load again, and the load is the dominant cost once the loops and
+the V_s x V_l family are gone. A2ACovariantSmear moves its source, so climbing
+costs no extra memory: a rung's arrays are freed as the next rung consumes them.
+
+--width names the highest rung to reach rather than picking one entry, since
+reaching a rung means applying every increment below it. --smeared-only drops the
+loops, the unsmeared contractions and the V_s x V_l family, leaving the vector
+loads, the smears and five contractions per rung, under its own run_id
+(contraction.<tag>.<rung>) so it sits beside the full job.
+
+Every job must climb the SAME ladder. An AMA correction differences the exact
+and sloppy field sets, so if the two were smeared differently the difference
+carries a smearing mismatch on top of the accuracy one, and nothing downstream
+would catch it.
+
 Per-rank host memory. At 512 nodes with 8 hits a FermionField is 1.5 MiB and
 all four legs fit at once, so nothing is tiled:
 
@@ -111,8 +132,13 @@ mf_ls and mf_sl are only ever used together in the kaon two-point function, and
 mf_ls_ww goes with them. Their extra files cost node-local metadata, not
 Lustre, until the drain.
 
-No sparsening here. It needs only the unsmeared V on disk, so it runs as its own
-job on a small node count, where vector loads cost the fewest node-hours.
+Sparsening. --sparsen writes the coarse strange V alongside everything else,
+which costs one module and about 0.3 GiB per rank -- 1/64 of V_s under the
+[4,4,4,1] spatial blocking -- against a job already holding 42 GiB of vectors.
+It is worth taking whenever the job loads V_s at all, since the alternative is a
+separate job paying the whole vector load again. Both accuracies are sparsened
+in the correction job: the AMA observable is built from the exact hit, so it
+needs the exact sparsened vectors too.
 
 Schedule (module order == schedule order):
 
@@ -122,8 +148,10 @@ Schedule (module order == schedule order):
     mf_ls_ww                                        once, all passes use it
     per accuracy: mf_sl, mf_ls, mf_ll, mf_pi
     per accuracy: emf_sloop, emf_lloop, emf_cloop, cmf, cmf_ape, mix
-    smear each accuracy's V_s and V_l, then W_l, W_s
-    mf_ls_ww, then per accuracy the four thin fields, smeared
+    per ladder rung: smear each accuracy's V_s and V_l, then W_l, W_s,
+                     then mf_ls_ww and per accuracy the four thin fields
+
+--smeared-only keeps the first three lines without their loops, and the last.
 
 A2ACovariantSmear moves its source and leaves it empty, so every consumer of an
 unsmeared array -- the loops and the unsmeared contractions -- is scheduled
@@ -153,6 +181,25 @@ LOOP_BLOCK_STRANGE = config.N_SC
 
 EMF_TYPES = "0 1 2 3"
 
+# A2ACoarseGrid bin sizes registered in the module header. The bin only chunks
+# the write, but it has to divide the leg exactly or the module runs off the end
+# of the array. Strange is easy -- 1536*nHit, which 256 always divides. Light is
+# nLow + 1536*nHit = 2000 + 1536*nHit, which nothing below 272 divides: 272
+# serves one hit (3536 = 13*272) and 376 eight (14288 = 38*376). Other hit counts
+# need their own registration, and several admit nothing usable, 5072 and 8144
+# being 16 times a prime.
+SPARSE_BINS = (48, 64, 96, 144, 149, 173, 192, 196, 197, 216, 256, 272, 376)
+
+
+def sparse_bin(n_mode):
+    """Largest registered A2ACoarseGrid bin that divides an n_mode leg."""
+    fits = [b for b in SPARSE_BINS if n_mode % b == 0]
+    if not fits:
+        raise ValueError(
+            f"no registered A2ACoarseGrid bin divides {n_mode} modes; add one "
+            f"to Hadrons/Modules/MUtilities/A2ACoarseGrid.hpp and to SPARSE_BINS")
+    return max(fits)
+
 # (name suffix, exact flag) per pass. A sloppy-only job tags nothing with an
 # accuracy; the correction job runs the same structure twice.
 SLOPPY_ONLY = (("", False),)
@@ -170,8 +217,25 @@ def parse_tag(tag):
     return list(range(int(match.group(1)))), SLOPPY_ONLY
 
 
+def select_ladder(target=None):
+    """The config.SMEAR_LADDER rungs up to and including `target`, or the whole
+    ladder if None. A target names a prefix, not one entry: reaching a rung means
+    applying every increment below it."""
+    if target is None:
+        return list(config.SMEAR_LADDER)
+    rungs = []
+    for rung in config.SMEAR_LADDER:
+        rungs.append(rung)
+        if rung[0] == target:
+            return rungs
+    known = ", ".join(r[0] for r in config.SMEAR_LADDER)
+    raise ValueError(f"no smearing rung '{target}' in config.SMEAR_LADDER "
+                     f"(have {known})")
+
+
 def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
-              loop_root=config.LOOP_ROOT):
+              loop_root=config.LOOP_ROOT, width=None, smeared_only=False,
+              sparsen=False):
     tag_hits, tag_accuracies = parse_tag(tag)
     accuracies = accuracies or tag_accuracies
     if hits is None:
@@ -186,12 +250,17 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
                 f"were given; a partial block needs its own job")
     n_hit = len(hits)
 
-    run_id = run_id or f"contraction.{tag}"
+    ladder = select_ladder(width)
+
+    # A smeared-only job emits no unsmeared output, so it takes its own run_id,
+    # named for the rung it climbs to, and sits alongside the full job's files.
+    if run_id is None:
+        run_id = f"contraction.{tag}"
+        if smeared_only:
+            run_id += f".{ladder[-1][0]}"
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
               graph_file=config.GRAPH)
     pool = VectorPool(job)
-    (width,) = config.SMEAR_WIDTHS
-    width_tag, alpha, N = width
 
     # leftBlock per left leg: the whole leg, i.e. no left blocking.
     rb = config.RIGHT_BLOCK
@@ -210,19 +279,25 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
     job.add(M.ape_smear("gauge_APE", "gauge", config.APE_ALPHA, config.APE_N,
                         config.ORTHOG_AXIS))
 
+    # The loops feed heavy_fields only, so a smeared-only job builds none of
+    # them and does not load the charm one either.
     loops = {}
     v = {}
-    for acc, _ in accuracies:
-        name = named("loop_c", acc)
-        job.add(M.load_prop(name, f"{loop_root}/{name}",
-                            format=config.PROP_IO_FORMAT))
-        loops[("c", acc)] = name
+    if not smeared_only:
+        for acc, _ in accuracies:
+            name = named("loop_c", acc)
+            job.add(M.load_prop(name, f"{loop_root}/{name}",
+                                format=config.PROP_IO_FORMAT))
+            loops[("c", acc)] = name
 
     # --- legs and loops, one flavor at a time ------------------------------
     def flavor_phase(flavor, n_low, block):
         w = pool.combined(flavor, "w", hits, tag=tag)
         for acc, exact in accuracies:
             leg = pool.combined(flavor, "v", hits, tag=tag, exact=exact)
+            v[(flavor, acc)] = leg
+            if smeared_only:
+                continue
             name = named(f"loop_{flavor}", acc)
             if load_loops:
                 job.add(M.load_prop(name, f"{loop_root}/{name}",
@@ -234,11 +309,29 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
                                      file=f"{loop_root}/{name}",
                                      format=config.PROP_IO_FORMAT))
             loops[(flavor, acc)] = name
-            v[(flavor, acc)] = leg
         return w
 
     w_l = flavor_phase("l", config.N_LOW, LOOP_BLOCK_LIGHT)
     w_s = flavor_phase("s", 0, LOOP_BLOCK_STRANGE)
+
+    # --- sparsened V, both flavours -----------------------------------------
+    # Ahead of every contraction, for the same reason the loops are saved early:
+    # a durable Lustre output that nothing else here consumes, so a later failure
+    # does not cost it. It must in any case precede the ladder, since
+    # A2ACovariantSmear moves its source. One concatenated array per accuracy
+    # rather than one per hit -- both legs of a PixW or VxPi product carry the
+    # full hit range with 1/nHit already folded into V, so the product runs the
+    # mode sum exactly as a single hit would, and a hit subset is a utility
+    # extraction either way. Writes to Lustre, not TMP_OUTPUT: A2ACoarseGrid is
+    # a collective single-file write, which node-local NVMe cannot serve.
+    if sparsen:
+        for flavor in ("s", "l"):
+            binsz = sparse_bin(config.leg_size(flavor, "v", n_hit))
+            for acc, _ in accuracies:
+                job.add(M.a2a_coarse_grid(
+                    named(f"sp_{flavor}", acc), binsz, v[(flavor, acc)],
+                    config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
+                    f"{config.SPARSE_ROOT}/{named(flavor, acc)}_v"))
 
     # --- contractions ------------------------------------------------------
     # W x W, so identical in every accuracy: one field, no accuracy suffix.
@@ -281,31 +374,48 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
                                   config.IDENTITY, config.ZERO_MOM,
                                   time_slice_io=True))
 
-    ww_field(w_l, w_s, "")
-    for acc, _ in accuracies:
-        thin_fields(acc, w_l, v[("l", acc)], w_s, v[("s", acc)], "")
-    for acc, _ in accuracies:
-        heavy_fields(acc, v[("l", acc)], v[("s", acc)])
+    if not smeared_only:
+        ww_field(w_l, w_s, "")
+        for acc, _ in accuracies:
+            thin_fields(acc, w_l, v[("l", acc)], w_s, v[("s", acc)], "")
+        for acc, _ in accuracies:
+            heavy_fields(acc, v[("l", acc)], v[("s", acc)])
 
-    # --- smear in place, then the smeared thin fields ----------------------
-    def smear(array):
-        name = f"{array}_{width_tag}"
-        job.add(M.a2a_covariant_smear(
-            name, a2a_vectors=array, gauge="gauge_APE", alpha=alpha, N=N,
-            orthog_axis=config.ORTHOG_AXIS, output="", multi_file=False))
-        return name
-
-    v_sm = {}
+    # --- climb the smearing ladder, contracting at every rung --------------
+    # Each rung smears the arrays the previous one produced, so `src` is rebound
+    # as we climb while the name is always built from the unsmeared base, keeping
+    # a rung's arrays tagged by the width they reach rather than by the chain.
+    # A2ACovariantSmear moves its source, so a rung's arrays must be contracted
+    # before the next rung's smears are emitted -- module order is schedule
+    # order, and the ordering is not expressed in the dependency graph.
+    base = {("w", "l"): w_l, ("w", "s"): w_s}
+    src = dict(base)
     for acc, _ in accuracies:
-        v_sm[("s", acc)] = smear(v[("s", acc)])
-        v_sm[("l", acc)] = smear(v[("l", acc)])
-    w_l_sm = smear(w_l)
-    w_s_sm = smear(w_s)
+        for flavor in ("l", "s"):
+            base[("v", flavor, acc)] = v[(flavor, acc)]
+            src[("v", flavor, acc)] = v[(flavor, acc)]
 
-    sm = f"_{width_tag}"
-    ww_field(w_l_sm, w_s_sm, sm)
-    for acc, _ in accuracies:
-        thin_fields(acc, w_l_sm, v_sm[("l", acc)], w_s_sm, v_sm[("s", acc)], sm)
+    for rung_tag, rung_alpha, rung_N in ladder:
+        def smear(key):
+            name = f"{base[key]}_{rung_tag}"
+            job.add(M.a2a_covariant_smear(
+                name, a2a_vectors=src[key], gauge="gauge_APE",
+                alpha=rung_alpha, N=rung_N, orthog_axis=config.ORTHOG_AXIS,
+                output="", multi_file=False))
+            src[key] = name
+            return name
+
+        for acc, _ in accuracies:
+            smear(("v", "s", acc))
+            smear(("v", "l", acc))
+        smear(("w", "l"))
+        smear(("w", "s"))
+
+        sm = f"_{rung_tag}"
+        ww_field(src[("w", "l")], src[("w", "s")], sm)
+        for acc, _ in accuracies:
+            thin_fields(acc, src[("w", "l")], src[("v", "l", acc)],
+                        src[("w", "s")], src[("v", "s", acc)], sm)
 
     return job, run_id
 
@@ -320,11 +430,25 @@ def main():
     parser.add_argument("--load-loops", action="store_true",
                         help="read the light and strange loops from LOOP_ROOT "
                              "instead of building them (restart)")
+    parser.add_argument("--width", metavar="TAG",
+                        choices=[r[0] for r in config.SMEAR_LADDER],
+                        help="highest rung of config.SMEAR_LADDER to climb to; "
+                             "every rung below it is applied and contracted on "
+                             "the way (default: the whole ladder)")
+    parser.add_argument("--smeared-only", action="store_true",
+                        help="emit only the smeared thin fields: no loops, no "
+                             "unsmeared contractions, no EMF/CMF/mix")
+    parser.add_argument("--sparsen", action="store_true",
+                        help="also write the sparsened strange V, one array per "
+                             "accuracy, to SPARSE_ROOT")
     args = parser.parse_args()
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"
     job, run_id = build_job(args.tag, hits=args.hits,
-                            load_loops=args.load_loops)
+                            load_loops=args.load_loops,
+                            width=args.width,
+                            smeared_only=args.smeared_only,
+                            sparsen=args.sparsen)
     job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")
     print(f"wrote {run_id} to {out_dir}")
 

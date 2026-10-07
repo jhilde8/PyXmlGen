@@ -135,16 +135,45 @@ PION_MOM = [
     [-1, 1, 1], [-1, 1, -1], [-1, -1, 1], [-1, -1, -1],
 ]
 
-# --- smearing width -----------------------------------------------------
-# (tag, alpha, N) -- tag is used in module/output names. Single width,
-# chosen to match the collaboration's 48I alpha=3 width in physical units
-# (48I: a^-1=1.73 GeV -> 0.3421 fm; 64I: a^-1=2.36 GeV -> alpha=4.0907
-# lattice units, rounded to 4.1) with N picked to hold the same smearing
-# coefficient coeff=alpha^2/(4N) as 48I's (alpha=3, N=24) -> coeff=0.09375.
-SMEAR_WIDTHS = [
-    ("w4p1_n45", 4.1, 45),
+# --- smearing ladder ------------------------------------------------------
+# (tag, alpha, N) rungs, applied in order. Each rung smears the PREVIOUS rung's
+# arrays, so its alpha and N are an increment, while its tag names the
+# cumulative width and total iteration count reached there -- w4p1_n45 is got to
+# by an increment of (3.56, 34) on top of w2p03_n11. A2ACovariantSmear moves its
+# source, so a rung's arrays are gone once the next rung has run and the peak
+# stays one array deep however long the ladder is.
+#
+# Effective width: the module applies (1 + coeff*Laplacian)^N with
+# coeff = alpha^2/(4N), whose Gaussian limit is exp(-N*coeff*p^2), so composing
+# rungs adds alpha^2 and the width at a rung is the quadrature sum of the
+# increments below it -- see smear_effective_alpha. That holds whether or not the
+# rungs share coeff.
+#
+# Tuned on 48I as (alpha=3, N=24) wide with (1.5, 6) intermediate, both at
+# coeff=0.09375. Scaled to 64I by alpha ~ a^-1 (1.73 -> 2.36 GeV) and N ~ a^-2,
+# so a 4.1 wide target is reached as 2.03 then 3.56, effective 4.098. The width
+# is a tuning choice for excited-state contamination and statistics, so hitting
+# 4.1 exactly carries no meaning -- but every job must walk the SAME ladder, or
+# an AMA correction differences two different smearings.
+SMEAR_LADDER = [
+    ("w2p03_n11", 2.03, 11),
+    ("w4p1_n45",  3.56, 34),
 ]
 ORTHOG_AXIS = 3
+
+
+def smear_effective_alpha(tag=None):
+    """Effective Gaussian width at ladder rung `tag` (the last rung if None),
+    as the quadrature sum of the increments up to and including it."""
+    total = 0.0
+    for rung_tag, alpha, _ in SMEAR_LADDER:
+        total += alpha * alpha
+        if rung_tag == tag:
+            return total ** 0.5
+    if tag is None:
+        return total ** 0.5
+    known = ", ".join(r[0] for r in SMEAR_LADDER)
+    raise ValueError(f"no smearing rung '{tag}' in SMEAR_LADDER (have {known})")
 
 # --- block rules -----------------------------------------------------------
 # leftBlock / rightBlock: modes per GEMM side for every A2AMesonField,
@@ -162,9 +191,13 @@ LEFT_BLOCK = 256
 RIGHT_BLOCK = 256
 
 # --- gauge (for CMO / EMF-adjacent smearing) -------------------------------
+# APE_ALPHA is a dimensionless mixing weight between the link and the staple
+# average, so it does not scale with the lattice spacing. APE_N sets a smoothing
+# radius that grows as sqrt(N) in lattice units, so it scales as a^-2: 48I's 25
+# becomes 46 on 64I, taken as 45 to match the covariant smearing's N.
 GAUGE_FILE = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/configs/ckpoint_lat"
 APE_ALPHA = 0.615384615
-APE_N = 25
+APE_N = 45
 
 # --- CMO operator parameters (unchanged from Frontier/MF/par.postCG.xml) --
 CMO_PARITIES = "0 1"

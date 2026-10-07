@@ -118,9 +118,31 @@ def product(terms, times, translations, translation_average):
     return el
 
 
+def bubble_product(terms, times):
+    """One <product> entry for BubbleContractorDense, whose ProductPar is only
+    {terms, times} -- no translations and no average, because a bubble is
+    indexed by where it SITS rather than by a separation.
+
+    The ordinary contractor sweeps the sink over all nt for each source and
+    bins at [tLast - dt]; the bubble takes the single sink at times[0] + dt and
+    bins at [dt], keeping the t dependence that correlating two bubbles in
+    analysis needs. One term is the bare tr[Pi(t)] -- the disconnected sigma
+    loop -- and takes no times at all; two terms is tr[Pi(t) Pi(t + times[0])],
+    the two-pion bubble with its internal separation fixed."""
+    el = ET.Element("elem")
+    _add_option(el, "terms", " ".join(terms) if isinstance(terms, (list, tuple)) else terms)
+    _add_option(el, "times", list(times))
+    return el
+
+
 class ContractorJob:
     """One contractor par file: a <global> block plus the matrices and
     products added to it."""
+
+    # Term counts the dense schema accepts. Two for a trace of a product;
+    # BubbleJob widens it to one, the bare tr[Pi(t)]. Three or more waits on a
+    # dense matrix product, which PixPi needs too.
+    DENSE_TERMS = (2,)
 
     def __init__(self, nt, disk_vector_dir, output, traj_start, traj_end,
                  traj_step=1, n_hit=None):
@@ -169,14 +191,17 @@ class ContractorJob:
                 raise ValueError(
                     f"product {terms} has {len(times)} times, expected "
                     f"{len(terms) - 1} (the last term is swept over all nt)")
-            if dense and len(terms) != 2:
+            if dense and len(terms) not in self.DENSE_TERMS:
                 raise ValueError(
-                    f"product {terms} has {len(terms)} terms; ContractorDense "
-                    f"handles 2 until PixPi lands")
+                    f"product {terms} has {len(terms)} terms; this schema takes "
+                    f"{self.DENSE_TERMS} until a dense matrix product lands")
             for t in terms:
                 if t not in self._matrices:
                     raise ValueError(f"product term '{t}' is not a declared a2aMatrix")
-            for expr in list(times) + [translations]:
+            exprs = list(times)
+            if translations is not None:
+                exprs.append(translations)
+            for expr in exprs:
                 for piece in str(expr).split():
                     if not re.match(TIME_RANGE, piece):
                         raise ValueError(
@@ -194,3 +219,21 @@ class ContractorJob:
         ET.ElementTree(self.root).write(xml_path, encoding="unicode",
                                         xml_declaration=True)
         return xml_path
+
+
+class BubbleJob(ContractorJob):
+    """A BubbleContractorDense par file.
+
+    Same <global> and <a2aMatrix> blocks as ContractorJob -- including nHit,
+    which is global because a bubble is never correlated against one built from
+    a different hit count -- but its products carry no translations or average.
+    One or two terms: tr[Pi(t)] for the disconnected sigma loop, or
+    tr[Pi(t) Pi(t + times[0])] for a two-pion bubble."""
+
+    DENSE_TERMS = (1, 2)
+
+    def add_product(self, terms, times):
+        terms = list(terms) if isinstance(terms, (list, tuple)) else terms.split()
+        times = list(times)
+        self._products.append((terms, times, None))
+        self.products_el.append(bubble_product(terms, times))
