@@ -183,12 +183,14 @@ EMF_TYPES = "0 1 2 3"
 
 # A2ACoarseGrid bin sizes registered in the module header. The bin only chunks
 # the write, but it has to divide the leg exactly or the module runs off the end
-# of the array. Strange is easy -- 1536*nHit, which 256 always divides. Light is
-# nLow + 1536*nHit = 2000 + 1536*nHit, which nothing below 272 divides: 272
-# serves one hit (3536 = 13*272) and 376 eight (14288 = 38*376). Other hit counts
-# need their own registration, and several admit nothing usable, 5072 and 8144
-# being 16 times a prime.
-SPARSE_BINS = (48, 64, 96, 144, 149, 173, 192, 196, 197, 216, 256, 272, 376)
+# of the array, and it is bounded above: the packed Lattice<SiteSpinorSet> gives
+# an accelerator stack frame of 384*bin bytes against a 131056 limit, so 376
+# fails to compile while 298 is known to work. Strange is easy, 1536*nHit, which
+# 256 always divides. Light is 2000 + 1536*nHit, which nothing below 221
+# divides: 221 serves one hit (3536 = 16*221) and 304 eight (14288 = 47*304).
+# Other hit counts need their own registration, and several admit nothing
+# usable, 5072 and 8144 being 16 times a prime.
+SPARSE_BINS = (48, 64, 96, 144, 149, 173, 192, 196, 197, 216, 221, 256, 304)
 
 
 def sparse_bin(n_mode):
