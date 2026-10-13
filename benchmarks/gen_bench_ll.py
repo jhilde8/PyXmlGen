@@ -201,7 +201,7 @@ def build_job(hits, width):
 def main():
     out_dir = Path(config.OUTPUT_ROOT) / "bench_ll"
     n = 0
-    for width in config.SMEAR_WIDTHS:
+    for width in config.SMEAR_LADDER:
         for hits in HIT_SETS:
             job, run_id = build_job(hits, width)
             job.write(out_dir / f"par.{run_id}.xml",

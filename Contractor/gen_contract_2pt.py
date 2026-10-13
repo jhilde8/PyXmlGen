@@ -46,9 +46,10 @@ from contractor_xml import ContractorJob
 
 TRAJ = 1520
 
-# (suffix on the meson field stem, label for the output directory)
-SMEARINGS = [("", "unsmeared"),
-             (f"_{config.SMEAR_WIDTHS[0][0]}", "smeared")]
+# (suffix on the meson field stem, label for the output directory). One entry per
+# ladder rung, since every rung writes its own meson fields.
+SMEARINGS = [("", "unsmeared")] + \
+            [(f"_{rung[0]}", rung[0]) for rung in config.SMEAR_LADDER]
 
 # Left (dense W) leg of each field, which is what sets nLow.
 LEFT_FLAVOR = {"mf_pi": "l", "mf_sl": "s", "mf_ls": "l"}
@@ -121,10 +122,18 @@ def contractions(channel):
                        [src, snk])
 
 
-def build(name, legs, terms, preset, smear):
+def build(name, legs, terms, preset, smear, translation_average=True):
     """One par file, with one product per accuracy. cacheSize = nt holds each
     field resident so the disk vector never spills -- Riker has no node-local
-    disk, so a spill would be pure Lustre traffic."""
+    disk, so a spill would be pure Lustre traffic.
+
+    translations is always the full 0..nt-1: dt is the SOURCE timeslice (the
+    first term sits at times[0] + dt) while the sink tLast sweeps all nt
+    regardless, so this uses every source placement the all-to-all propagator
+    affords. translation_average=False writes each source to its own
+    _dt_<dt> file instead of collapsing them, RAW -- the averaged path divides
+    by translations.size() and the per-source path does not, so re-blocking in
+    analysis means summing and dividing yourself."""
     job = ContractorJob(
         nt=config.N_T,
         disk_vector_dir=f"{config.CONTRACTION_ROOT}/dv/{name}",
@@ -141,7 +150,7 @@ def build(name, legs, terms, preset, smear):
                            time_slice_io=True)
         job.add_product(terms=[t + acc for t in terms], times=["0"],
                         translations=f"0..{config.N_T - 1}",
-                        translation_average=True)
+                        translation_average=translation_average)
     return job
 
 
@@ -152,23 +161,31 @@ def main():
     parser.add_argument("--ama", action="store_true",
                         help="the AMA correction hit: 1-hit fields under "
                              "MF_AMA_BASE, sloppy and exact in one par file")
+    parser.add_argument("--no-average", action="store_true",
+                        help="write one correlator per source timeslice "
+                             "(_dt_<dt>) instead of their average, so the "
+                             "blocking is chosen in analysis")
     args = parser.parse_args()
 
     preset = PRESETS["ama" if args.ama else "production"]
-    out_dir = Path(config.OUTPUT_ROOT) / preset["out"]
+    suffix = "_bysource" if args.no_average else ""
+    out_dir = Path(config.OUTPUT_ROOT) / (preset["out"] + suffix)
 
     names = []
     for smear, label in SMEARINGS:
         for name, legs, terms in contractions(args.channel):
-            full = f"{name}_{label}"
-            build(full, legs, terms, preset, smear).write(
+            full = f"{name}_{label}{suffix}"
+            build(full, legs, terms, preset, smear,
+                  translation_average=not args.no_average).write(
                 out_dir / f"par.{full}.xml")
             names.append(full)
 
     products = len(preset["accuracies"])
+    per_product = config.N_T if args.no_average else 1
     print(f"wrote {len(names)} par files to {out_dir}"
           f"   ({products} product{'s' if products > 1 else ''} each, "
-          f"nHit = {preset['n_hit']})")
+          f"nHit = {preset['n_hit']}, "
+          f"{products * per_product} correlator file(s) per run)")
     print(f"  meson fields  {preset['base']}/<stem>.{TRAJ}/")
     print(f"  correlators   {config.CONTRACTION_ROOT}/<name>/")
     print("\nEvery <output> directory must exist before its run: saveCorrelator"
