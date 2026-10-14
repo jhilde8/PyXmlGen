@@ -33,16 +33,15 @@ That is why this is an XML job.
 
 Chunking. The four 128-mode pieces come from four separate hit directories
 rather than from slices of one array, which avoids depending on anything that
-does not exist: no loader can begin reading at a bin other than the first, so a
-single array cannot be split by loading. LoadCombinedA2AVecsV takes
+does not exist: no loader can begin reading at an element other than the first,
+so a single array cannot be split by loading. LoadCombinedA2AVecsV takes
 highExtensions as a list and fills out[offset ...] one extension at a time with
 offset advancing by highSize, so the baseline's mode h*128 + j IS chunk h's
 mode j, in that order -- which is precisely what makes the equivalence exact
 rather than approximate. nHit is 1 on every load, so the loader's 1/nHit factor
 is the identity and both paths see byte-identical vectors.
 
-highSize is one bin (128), so each extension is a single file, elem0 of that
-hit's directory.
+highSize is 128, so each extension is elem0 .. elem127 of that hit's directory.
 
 Strange is used because it has no low modes, so nLow is simply each array's
 size. That matters: with left.size() == right.size() A2ALoopNew takes the
@@ -56,10 +55,9 @@ so it does not depend on whether expanded high-mode W survived the dense-W
 migration. The EMF's external legs reuse the same array for the same reason.
 
 Only the expanded path is exercised, which is sufficient: the seeding happens
-before either branch is chosen, and gen_verify_loop.py already covers the dense
-path. That job also covers what this one cannot -- that an empty inputLoop still
-zeroes -- since every existing caller passes it empty and is validated against
-the loop_vw reference.
+before either branch is chosen, and the dense path was verified separately
+against the loop_vw reference, which also covered what this job cannot -- that
+an empty inputLoop still zeroes.
 
 Not covered here, and better suited to a dedicated executable: the fine chain,
 128 links of one mode each. 128 modules of XML to test an arithmetic identity is
@@ -79,9 +77,9 @@ from hadrons_xml import Job
 # No low modes, so nLow is just each array's size on every call.
 TEST_FLAVOR = "s"
 
-# Four chunks of one high-mode bin each, one per hit directory.
+# Four chunks of 128 high modes each, one per hit directory.
 N_CHUNKS = 4
-CHUNK = config.HIGH_BIN_SIZE
+CHUNK = 128
 N_TOTAL = N_CHUNKS * CHUNK
 
 # nHit = 1 makes the loader's 1/nHit factor the identity, so both paths see
@@ -110,9 +108,7 @@ def load_chunks(job, name, hits):
         name, low_filestem="", n_low=0,
         high_stem=config.high_stem(),
         high_extensions=[config.high_extension(TEST_FLAVOR, h, "v") for h in hits],
-        high_size=CHUNK,
-        low_bin_size=config.LOW_BIN_SIZE,
-        high_bin_size=config.HIGH_BIN_SIZE, n_hit=NO_NORM))
+        high_size=CHUNK, n_hit=NO_NORM))
     return name
 
 

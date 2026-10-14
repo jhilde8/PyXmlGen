@@ -27,12 +27,11 @@ Per-rank host memory at 256 ranks, where a FermionField is 24 MiB (6 GiB / 256)
 and a PropagatorField is 12x that:
 
     V, one hit          1536 fields   36.0 GiB
-    loader staging       128 fields    3.0 GiB   (one bin, transient)
     W dense               12 fields    0.3 GiB
     gather buffer         12 fields    0.3 GiB   (A2ALoopNew vtilde)
     loop, link + seed      2 props     0.6 GiB
                                       ---------
-                                      40.2 GiB of 59.6
+                                      37.2 GiB of 59.6
 
 Frontier builds with --enable-unified=no, so all of that is host DDR. The
 aggregate is ~10 TB of ~16 TB. 16 nodes does not fit: one hit's V alone is
@@ -89,7 +88,7 @@ def add_noise_and_w(job, tag, hit):
     job.add(M.load_time_diluted_noise(
         noise, [config.noise_filestem(FLAVOR, hit)], config.N_NOISE_PER_STEM))
     job.add(M.load_combined_a2a_vecs_w(
-        w, config.LOW_BIN_SIZE, low_filestem="", n_low=0, noise=noise))
+        w, low_filestem="", n_low=0, noise=noise))
     return w
 
 
@@ -102,9 +101,7 @@ def add_v(job, name, hit, n_hit, exact=False):
         name, low_filestem="", n_low=0,
         high_stem=config.high_stem(exact),
         high_extensions=[config.high_extension(FLAVOR, hit, "v", exact)],
-        high_size=config.N_HIGH,
-        low_bin_size=config.LOW_BIN_SIZE,
-        high_bin_size=config.HIGH_BIN_SIZE, n_hit=n_hit))
+        high_size=config.N_HIGH, n_hit=n_hit))
     return name
 
 

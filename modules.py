@@ -8,18 +8,13 @@ TypeError at generation time instead of silently-wrong XML.
 from hadrons_xml import module
 
 
-def load_binned_a2a_vecs(name, bin_size, filestem, size, multi_file=True):
-    return module(name, f"MIO::LoadBinnedA2AVecs{bin_size}",
-                  filestem=filestem, multiFile=multi_file, size=size)
-
-
 def load_combined_a2a_vecs_v(name, low_filestem, n_low, high_stem, high_extensions,
-                            high_size, low_bin_size, high_bin_size, n_hit=0):
+                            high_size, n_hit=0):
     # n_hit: 1/nHit hit-average normalization on the high-mode blocks; the
     # factor lives on the V side by convention, so set it (to the number of
     # hits in the job's estimator) only for V loads. 0 or 1 = no rescaling
     # (W loads, single-hit data).
-    return module(name, f"MIO::LoadCombinedA2AVecsV{low_bin_size}x{high_bin_size}",
+    return module(name, "MIO::LoadCombinedA2AVecsV",
                   lowFilestem=low_filestem, nLow=n_low, highStem=high_stem,
                   highExtensions=high_extensions, highSize=high_size, nHit=n_hit)
 
@@ -40,54 +35,32 @@ def load_time_diluted_noise(name, file_stems, n_noise_per_file_stem=1):
                   fileStems=file_stems, nNoisePerFileStem=n_noise_per_file_stem)
 
 
-def load_combined_a2a_vecs_w(name, low_bin_size, low_filestem, n_low, noise):
-    # Dense/combined high-mode W representation: nLow low modes from binned
-    # files, then 12 dense fermion fields per hit expanded from `noise`
+def load_combined_a2a_vecs_w(name, low_filestem, n_low, noise):
+    # Dense/combined high-mode W representation: nLow low modes from files,
+    # then 12 dense fermion fields per hit expanded from `noise`
     # (slot = nLow + hit*12 + sc, sc fastest). No nHit normalization: W stays
     # raw noise.
-    return module(name, f"MIO::LoadCombinedA2AVecsW{low_bin_size}",
+    return module(name, "MIO::LoadCombinedA2AVecsW",
                   lowFilestem=low_filestem, nLow=n_low, noise=noise)
 
 
-def a2a_high_mode_v_binned(name, bin_size, noise, action, solver, output,
-                            multi_file=True, init_bin=0, n_bin=0):
-    # init_bin/n_bin: compute bins [init_bin, init_bin + n_bin) of the hit, to
-    # split a hit across jobs or resume one; n_bin=0 means through the last
-    # bin. Any partial range needs multi_file=True (the module rejects it
-    # otherwise). Defaults compute the whole hit.
-    return module(name, f"MSolver::A2AHighModeVBinned{bin_size}",
+def a2a_high_mode_v(name, noise, action, solver, output, init_vec=0, n_vec=0):
+    # init_vec/n_vec: compute noise vectors [init_vec, init_vec + n_vec) of
+    # the hit, to split a hit across jobs or resume one; n_vec=0 means through
+    # the last vector. Defaults compute the whole hit.
+    return module(name, "MSolver::A2AHighModeV",
                   noise=noise, action=action, solver=solver, output=output,
-                  multiFile=multi_file, initBin=init_bin, nBin=n_bin)
+                  initVec=init_vec, nVec=n_vec)
 
 
-def a2a_low_mode_coarse_binned(name, n_basis, bin_size, eigen_pack, action,
-                                output, schur_convention="", check_interval=0):
-    return module(name, f"MUtilities::A2ALowModeCoarseBinned{n_basis}Bin{bin_size}",
-                  eigenPack=eigen_pack, action=action, output=output,
-                  schurConvention=schur_convention, checkInterval=check_interval)
+def a2a_low_modes_coarse(name, n_basis, eigen_pack, action, output):
+    return module(name, f"MUtilities::A2ALowModesCoarse{n_basis}",
+                  eigenPack=eigen_pack, action=action, output=output)
 
 
-def a2a_low_mode_binned(name, bin_size, action, eigen_pack, output,
-                         multi_file=True):
-    return module(name, f"MUtilities::A2ALowModeBinned{bin_size}",
-                  action=action, eigenPack=eigen_pack, output=output,
-                  multiFile=multi_file)
-
-
-def load_binned_a2a_vecs_v(name, low_bin_size, high_bin_size, low_filestem,
-                            high_file_stems, low_size, high_size, n_hit,
-                            multi_file=True):
-    return module(name, f"MIO::LoadBinnedA2AVecsV{low_bin_size}_{high_bin_size}",
-                  lowFilestem=low_filestem, highFileStems=high_file_stems,
-                  multiFile=multi_file, lowSize=low_size, highSize=high_size,
-                  nHit=n_hit)
-
-
-def load_binned_a2a_vecs_w(name, bin_size, filestem, low_size, noise,
-                            multi_file=True):
-    return module(name, f"MIO::LoadBinnedA2AVecsW{bin_size}",
-                  filestem=filestem, multiFile=multi_file, lowSize=low_size,
-                  noise=noise)
+def a2a_low_modes(name, action, eigen_pack, output):
+    return module(name, "MUtilities::A2ALowModes",
+                  action=action, eigenPack=eigen_pack, output=output)
 
 
 def vector_pack_ref_slice(name, source, offsets, counts):

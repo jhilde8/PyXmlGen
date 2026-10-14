@@ -19,19 +19,17 @@ AMA_HIT = N_HIT
 # Base directory holding the vw/ subdirectory of A2A vector files.
 VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
 
-# Low modes: one set (light only), 10 files x 200 vectors, filestem
+# Low modes: one set (light only), one file per vector, filestem
 # "<VW_BASE>/l_lo_v" / "l_lo_w" (module appends ".<traj>/elemN.bin").
 N_LOW = 2000
-LOW_BIN_SIZE = 200
 LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
 
-# High modes: per flavor, per hit, 12 files x 128 vectors. The tree is split by
+# High modes: per flavor, per hit, one file per vector. The tree is split by
 # solve accuracy: every sloppy hit under VW_SLOPPY as "<flavor><hit>_v" /
 # "<flavor><hit>_w", and the AMA hit's exact solve under VW_EXACT as
-# "<flavor><hit>_exact". The binned loaders take a stem and one extension per
-# hit, which is what high_stem() and high_extension() below produce.
+# "<flavor><hit>_exact". The loaders take a stem and one extension per hit,
+# which is what high_stem() and high_extension() below produce.
 N_HIGH = 1536
-HIGH_BIN_SIZE = 128
 VW_SLOPPY = f"{VW_BASE}/sloppy"
 VW_EXACT = f"{VW_BASE}/exact"
 
@@ -63,7 +61,7 @@ def low_filestem(flavor, vw):
 
 
 def high_stem(exact=False):
-    """Directory the binned V/W loaders prepend to each hit's extension."""
+    """Directory the V/W loaders prepend to each hit's extension."""
     return f"{VW_EXACT}/" if exact else f"{VW_SLOPPY}/"
 
 

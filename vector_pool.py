@@ -105,7 +105,7 @@ class VectorPool:
         name = f"a2a_{flavor}_{vw}_{self._tag(hits, tag)}{suffix}"
         if vw == "w":
             self.job.add(M.load_combined_a2a_vecs_w(
-                name, config.LOW_BIN_SIZE, low_filestem,
+                name, low_filestem,
                 config.N_LOW if has_low else 0, self.noise(flavor, hits, tag)))
         else:
             high_extensions = [config.high_extension(flavor, h, vw, exact)
@@ -113,7 +113,7 @@ class VectorPool:
             self.job.add(M.load_combined_a2a_vecs_v(
                 name, low_filestem, config.N_LOW if has_low else 0,
                 config.high_stem(exact), high_extensions, config.N_HIGH,
-                config.LOW_BIN_SIZE, config.HIGH_BIN_SIZE, n_hit=len(hits)))
+                n_hit=len(hits)))
         self._combined[key] = name
         return name
 

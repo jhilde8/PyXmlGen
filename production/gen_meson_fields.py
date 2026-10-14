@@ -132,22 +132,11 @@ mf_ls and mf_sl are only ever used together in the kaon two-point function, and
 mf_ls_ww goes with them. Their extra files cost node-local metadata, not
 Lustre, until the drain.
 
-Sparsening. --sparsen writes the coarse V and W of both flavours alongside
-everything else, which costs four modules and under 1 GiB per rank -- 1/64 of
-each leg under the [4,4,4,1] spatial blocking -- against a job already holding
-42 GiB of vectors. It is worth taking whenever the job loads the vectors at all,
-since the alternative is a separate job paying the whole load again. Both
-accuracies of V are sparsened in the correction job: the AMA observable is built
-from the exact hit, so it needs the exact sparsened vectors too. W has no
-accuracy, being the noise and the eigen-derived low block, so one array per
-flavour serves both passes.
-
-The dense W sparsens with no special handling. COARSE_BLOCK_SIZE is spatial
-only, with the time index left at 1, and a dense W slot is a whole noise field
-whose expansion into a mode is a mask on the time index -- so the mask and the
-spatial subsample commute, and sparsening the dense array then expanding is the
-same thing as expanding then sparsening. Expanding first would only be a way of
-writing a great many zeros.
+Sparsening is not done here. A sparsened field is 1/64 of a fine one, ~100 MB,
+which at this job's node counts is ~49 KB per rank per file at 256 nodes and
+~25 KB at 512 -- far below the ~4 MB per rank a Lustre write needs, so per-file
+overhead dominates; the ama job did not finish its sparsening within an hour at
+256 nodes. It runs in its own 32-node job, production/gen_sparsen.py.
 
 Schedule (module order == schedule order):
 
@@ -224,8 +213,7 @@ def select_ladder(target=None):
 
 
 def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
-              loop_root=config.LOOP_ROOT, width=None, smeared_only=False,
-              sparsen=False):
+              loop_root=config.LOOP_ROOT, width=None, smeared_only=False):
     tag_hits, tag_accuracies = parse_tag(tag)
     accuracies = accuracies or tag_accuracies
     if hits is None:
@@ -303,28 +291,6 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
 
     w_l = flavor_phase("l", config.N_LOW, LOOP_BLOCK_LIGHT)
     w_s = flavor_phase("s", 0, LOOP_BLOCK_STRANGE)
-
-    # --- sparsened V, both flavours -----------------------------------------
-    # Ahead of every contraction, for the same reason the loops are saved early:
-    # a durable Lustre output that nothing else here consumes, so a later failure
-    # does not cost it. It must in any case precede the ladder, since
-    # A2ACovariantSmear moves its source. One concatenated array per accuracy
-    # rather than one per hit -- both legs of a PixW or VxPi product carry the
-    # full hit range with 1/nHit already folded into V, so the product runs the
-    # mode sum exactly as a single hit would, and a hit subset is a utility
-    # extraction either way. Writes to Lustre, not TMP_OUTPUT: A2ACoarseGrid is
-    # a collective single-file write, which node-local NVMe cannot serve.
-    if sparsen:
-        for flavor, w in (("s", w_s), ("l", w_l)):
-            for acc, _ in accuracies:
-                job.add(M.a2a_coarse_grid(
-                    named(f"sp_{flavor}_v", acc), v[(flavor, acc)],
-                    config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
-                    f"{config.SPARSE_ROOT}/{named(flavor, acc)}_v"))
-            job.add(M.a2a_coarse_grid(
-                named(f"sp_{flavor}_w"), w,
-                config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
-                f"{config.SPARSE_ROOT}/{named(flavor)}_w"))
 
     # --- contractions ------------------------------------------------------
     # W x W, so identical in every accuracy: one field, no accuracy suffix.
@@ -431,17 +397,13 @@ def main():
     parser.add_argument("--smeared-only", action="store_true",
                         help="emit only the smeared thin fields: no loops, no "
                              "unsmeared contractions, no EMF/CMF/mix")
-    parser.add_argument("--sparsen", action="store_true",
-                        help="also write the sparsened V and W of both flavours "
-                             "to SPARSE_ROOT, V once per accuracy")
     args = parser.parse_args()
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"
     job, run_id = build_job(args.tag, hits=args.hits,
                             load_loops=args.load_loops,
                             width=args.width,
-                            smeared_only=args.smeared_only,
-                            sparsen=args.sparsen)
+                            smeared_only=args.smeared_only)
     job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")
     print(f"wrote {run_id} to {out_dir}")
 

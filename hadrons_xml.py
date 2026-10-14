@@ -87,7 +87,7 @@ class Job:
         scheduler = ET.SubElement(params, "scheduler")
         ET.SubElement(scheduler, "schedulerType").text = "naive"
         ET.SubElement(params, "graphFile").text = graph_file
-        ET.SubElement(params, "parallelWriteMaxRetry").text = "1"
+        ET.SubElement(params, "parallelWriteMaxRetry").text = "-1"
         # We hand-order modules == schedule order below, so Hadrons should
         # use our schedule file rather than compute (and overwrite) its own.
         ET.SubElement(params, "saveSchedule").text = "false"
