@@ -102,8 +102,8 @@ def a2a_covariant_smear(name, a2a_vectors, gauge, alpha, N, orthog_axis=3,
                   orthog_axis=orthog_axis, output=output, multiFile=multi_file)
 
 
-def a2a_coarse_grid(name, bin_size, fine, block_size, offsets, output):
-    return module(name, f"MUtilities::A2ACoarseGrid{bin_size}",
+def a2a_coarse_grid(name, fine, block_size, offsets, output):
+    return module(name, "MUtilities::A2ACoarseGrid",
                   fine=fine, blockSize=block_size, offsets=offsets, output=output)
 
 

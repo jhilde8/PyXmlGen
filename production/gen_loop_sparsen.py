@@ -12,16 +12,11 @@ ride along in svlv, but at 6 and 8 hits svlv tiles V_s into blocks and never
 holds the whole thing, so the loop would have to be chained there anyway.
 
 Dropping the low modes is what makes this job simple. Strange and charm have
-none (config.FLAVOR_HAS_LOW), so:
-
-  - every load is one whole hit of high modes from its own directory, which the
-    binned loaders already address without needing a bin offset;
-  - V_s at 8 hits is 12288 modes, exactly 48 bins of 256, so the sparsening
-    needs no A2ACoarseGrid size that is not already registered.
-
-Both were blockers while the light low modes were in scope -- 2000 divides by
-none of the registered bin sizes, and no loader can start reading at a bin other
-than the first -- and both disappear with this split.
+none (config.FLAVOR_HAS_LOW), so every load is one whole hit of high modes from
+its own directory, which the binned loaders address without needing a bin
+offset. That was a blocker while the light low modes were in scope -- no loader
+can start reading at a bin other than the first -- and it disappears with this
+split.
 
 Per hit the job holds one expanded V block, its dense W partner, and the
 loader's bin staging:
@@ -30,10 +25,9 @@ loader's bin staging:
     loader staging  128 fields    3.0 GiB            (one bin, transient)
     W dense          12 fields    0.3 GiB            (N_SC per hit)
     coarse                        0.6 GiB            (1/64 of V, [4,4,4,1])
-    A2ACoarseGrid bvec            0.6 GiB            (packed copy, pre-write)
     loop                          0.3 GiB            (144 cplx/site)
                                  ---------
-                                 40.8 GiB of ~59.6 usable
+                                 40.2 GiB of ~59.6 usable
 
 at 24 MiB per field on 256 ranks. That is HOST memory: Frontier builds with
 --enable-unified=no, so lattice data is host-resident (512 GB DDR per node, 64
@@ -73,17 +67,9 @@ accumulated light loop would wrongly scale its 2000 low modes as well.)
 Sparsening rides on loads the loop has already paid for, which is the whole
 reason it lives here. Charm is not sparsened.
 
-Sparsened file layout is one file per hit. In A2AVectorsIo the multiFile flag
-decides FILE count and binSize decides RECORD count within the file:
-
-    multiFile = true    <stem>.<traj>/elem<i>.bin, one file per record
-    multiFile = false   <stem>.<traj>.bin, one file holding every record
-
-A2ACoarseGrid hardcodes false, so calling it once per hit at binSize 256 gives
-exactly one file per hit with 6 records inside, and no code change. Read it back
-with multi_file=False, size=N_HIGH and bin size 256 -- the default
-multi_file=True on the binned loaders would look for elem0.bin and miss, and the
-read bin size is welded to 256 by the SiteSpinorSet template.
+Sparsened file layout is one directory per hit, <stem>.<traj>/elem<i>.bin:
+A2ACoarseGrid writes with multiFile = true, one file per mode, each 1/64 of a
+fine field. Read it back with multi_file=True and size=N_HIGH.
 
 Ordering: this job and the light-light job must both finish before svlv, which
 consumes all three loops through MIO::LoadProp. They do not depend on each
@@ -104,12 +90,6 @@ N_HIT = 8
 # Flavours needing a loop built here, and which of those get their V sparsened.
 LOOP_FLAVORS = ("s", "c")
 SPARSEN_FLAVORS = ("s",)
-
-# Records per sparsened file. Must divide N_HIGH and be a registered
-# A2ACoarseGrid instantiation: 1536 is 6 bins of 256. On a non-divisor the
-# module prints "Irrelevant binsize ... NOT saved" and then writes anyway,
-# reading past the end of the array on the tail bin.
-SPARSE_BIN_HIGH = 256
 
 # A2ALoopNew mode-sweep blocking: how many field views are open on the device at
 # once, independent of how many modes are host-resident. 2*block*24 MiB has to
@@ -175,7 +155,7 @@ def add_flavor(job, flavor, n_hit, sparsen, sparse_root=SPARSE_ROOT):
         # released together before the next one loads.
         if sparsen:
             job.add(M.a2a_coarse_grid(
-                f"sp_{flavor}_h{h}", SPARSE_BIN_HIGH, v,
+                f"sp_{flavor}_h{h}", v,
                 config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
                 f"{sparse_root}/{flavor}{h}_v"))
 

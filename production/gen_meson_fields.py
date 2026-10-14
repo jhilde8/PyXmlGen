@@ -132,13 +132,22 @@ mf_ls and mf_sl are only ever used together in the kaon two-point function, and
 mf_ls_ww goes with them. Their extra files cost node-local metadata, not
 Lustre, until the drain.
 
-Sparsening. --sparsen writes the coarse strange V alongside everything else,
-which costs one module and about 0.3 GiB per rank -- 1/64 of V_s under the
-[4,4,4,1] spatial blocking -- against a job already holding 42 GiB of vectors.
-It is worth taking whenever the job loads V_s at all, since the alternative is a
-separate job paying the whole vector load again. Both accuracies are sparsened
-in the correction job: the AMA observable is built from the exact hit, so it
-needs the exact sparsened vectors too.
+Sparsening. --sparsen writes the coarse V and W of both flavours alongside
+everything else, which costs four modules and under 1 GiB per rank -- 1/64 of
+each leg under the [4,4,4,1] spatial blocking -- against a job already holding
+42 GiB of vectors. It is worth taking whenever the job loads the vectors at all,
+since the alternative is a separate job paying the whole load again. Both
+accuracies of V are sparsened in the correction job: the AMA observable is built
+from the exact hit, so it needs the exact sparsened vectors too. W has no
+accuracy, being the noise and the eigen-derived low block, so one array per
+flavour serves both passes.
+
+The dense W sparsens with no special handling. COARSE_BLOCK_SIZE is spatial
+only, with the time index left at 1, and a dense W slot is a whole noise field
+whose expansion into a mode is a mask on the time index -- so the mask and the
+spatial subsample commute, and sparsening the dense array then expanding is the
+same thing as expanding then sparsening. Expanding first would only be a way of
+writing a great many zeros.
 
 Schedule (module order == schedule order):
 
@@ -180,27 +189,6 @@ LOOP_BLOCK_LIGHT = 200
 LOOP_BLOCK_STRANGE = config.N_SC
 
 EMF_TYPES = "0 1 2 3"
-
-# A2ACoarseGrid bin sizes registered in the module header. The bin only chunks
-# the write, but it has to divide the leg exactly or the module runs off the end
-# of the array, and it is bounded above: the packed Lattice<SiteSpinorSet> gives
-# an accelerator stack frame of 384*bin bytes against a 131056 limit, so 376
-# fails to compile while 298 is known to work. Strange is easy, 1536*nHit, which
-# 256 always divides. Light is 2000 + 1536*nHit, which nothing below 221
-# divides: 221 serves one hit (3536 = 16*221) and 304 eight (14288 = 47*304).
-# Other hit counts need their own registration, and several admit nothing
-# usable, 5072 and 8144 being 16 times a prime.
-SPARSE_BINS = (48, 64, 96, 144, 149, 173, 192, 196, 197, 216, 221, 256, 304)
-
-
-def sparse_bin(n_mode):
-    """Largest registered A2ACoarseGrid bin that divides an n_mode leg."""
-    fits = [b for b in SPARSE_BINS if n_mode % b == 0]
-    if not fits:
-        raise ValueError(
-            f"no registered A2ACoarseGrid bin divides {n_mode} modes; add one "
-            f"to Hadrons/Modules/MUtilities/A2ACoarseGrid.hpp and to SPARSE_BINS")
-    return max(fits)
 
 # (name suffix, exact flag) per pass. A sloppy-only job tags nothing with an
 # accuracy; the correction job runs the same structure twice.
@@ -327,13 +315,16 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
     # extraction either way. Writes to Lustre, not TMP_OUTPUT: A2ACoarseGrid is
     # a collective single-file write, which node-local NVMe cannot serve.
     if sparsen:
-        for flavor in ("s", "l"):
-            binsz = sparse_bin(config.leg_size(flavor, "v", n_hit))
+        for flavor, w in (("s", w_s), ("l", w_l)):
             for acc, _ in accuracies:
                 job.add(M.a2a_coarse_grid(
-                    named(f"sp_{flavor}", acc), binsz, v[(flavor, acc)],
+                    named(f"sp_{flavor}_v", acc), v[(flavor, acc)],
                     config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
                     f"{config.SPARSE_ROOT}/{named(flavor, acc)}_v"))
+            job.add(M.a2a_coarse_grid(
+                named(f"sp_{flavor}_w"), w,
+                config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
+                f"{config.SPARSE_ROOT}/{named(flavor)}_w"))
 
     # --- contractions ------------------------------------------------------
     # W x W, so identical in every accuracy: one field, no accuracy suffix.
@@ -441,8 +432,8 @@ def main():
                         help="emit only the smeared thin fields: no loops, no "
                              "unsmeared contractions, no EMF/CMF/mix")
     parser.add_argument("--sparsen", action="store_true",
-                        help="also write the sparsened strange V, one array per "
-                             "accuracy, to SPARSE_ROOT")
+                        help="also write the sparsened V and W of both flavours "
+                             "to SPARSE_ROOT, V once per accuracy")
     args = parser.parse_args()
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"

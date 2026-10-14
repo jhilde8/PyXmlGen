@@ -95,11 +95,8 @@ legs are fully resident, so it is one A2ALoopNew call with nLow = N_LOW, which
 takes the dense path and reports Low modes, Gather and High modes as separate
 timers.
 
-Sparsening the unsmeared V_l is guarded to one hit. V_l is N_LOW + N_HIGH*h,
-which 221 divides only at h=1 (3536 = 16*221); at h=2, 5072 = 16*317 with 317
-prime, leaving no bin size in a usable range. The cost is linear in mode count
-so one point gives the rate, and 221 is the only new A2ACoarseGrid
-instantiation any of this needs.
+Sparsening the unsmeared V_l is done at one hit only. The cost is linear in mode
+count, so one point gives the rate and the h=2 run is spared the write.
 
 One job per hit count rather than both in one: keeping the runs separate
 stops the h=1 measurement from sharing an allocation with h=2 arrays.
@@ -120,9 +117,6 @@ HIT_SETS = ([0], [0, 1])
 # A2ALoopNew mode-sweep blocking: how many field views are open on the device at
 # once, independent of how many modes are host-resident.
 LOOP_BLOCK = 50
-
-# Sparsening bin for the light V; divides N_LOW + N_HIGH*h only at one hit.
-SPARSE_BIN_LIGHT = 221
 
 # Site root, taken as the parent of config.VW_BASE so the ensemble path stays
 # written down in exactly one place.
@@ -160,7 +154,7 @@ def build_job(hits, width):
 
     if len(hits) == 1:
         job.add(M.a2a_coarse_grid(
-            f"sp_l_v_{tag}", SPARSE_BIN_LIGHT, lv,
+            f"sp_l_v_{tag}", lv,
             config.COARSE_BLOCK_SIZE, config.COARSE_OFFSETS,
             f"{SPARSE_ROOT}/l_v_{tag}"))
 
