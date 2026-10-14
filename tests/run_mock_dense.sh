@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-BIN="${BIN:-/home/quarkonium/gpubuild/Hadrons/build_cpu/utilities}"
+BIN="${BIN:-/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/A2AContractions/Hadrons/build/utilities}"
 
 TESTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYXMLGEN="$(dirname "$TESTS")"

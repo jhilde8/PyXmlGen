@@ -39,7 +39,7 @@ from contractor_xml import ContractorJob
 # Deliberately tiny and unphysical: nLow non-zero so the low block is
 # exercised, nHit > 1 so the hit stride is, nt > 2 so a wrong timeslice cannot
 # coincide with a right one.
-N_LOW = 4
+N_LOW = 200
 # Must equal Ns*Nc: ContractorDense takes nSc as a compile-time constant, not a
 # par field, so a test picking its own value simply disagrees with the binary.
 N_SC = 12
@@ -47,12 +47,12 @@ N_SC = 12
 # Hdf5Writer inlines a vector as an ATTRIBUTE at or below the threshold and
 # writes a dataset above it, so a shorter correlator would be stored somewhere
 # production never puts it and the checker would need both paths.
-N_T = 8
-N_HIT = 2
+N_T = 64
+N_HIT = 4
 
 TRAJ = 0
 DATASET = "mock"
-SEED = 20260924
+SEED = 2064524
 
 OUT_DIR = Path(config.OUTPUT_ROOT) / "mock_dense"
 
