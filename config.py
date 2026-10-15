@@ -93,6 +93,89 @@ LOOP_ROOT = str(Path(VW_BASE).parent / "a2aloop")
 SPARSE_ROOT = str(Path(VW_BASE).parent / "sparse")
 
 
+# --- CG: high-mode V solves (production/gen_cg.py) ------------------------
+# Working directory of the CG jobs on Frontier, and where their XML and
+# schedule files live (cf. XML_DIR for the meson-field jobs).
+CG_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/CG"
+CG_XML_DIR = f"{CG_DIR}/xml"
+CG_GRAPH = f"{CG_DIR}/graph.gv"
+
+
+def cg_schedule_file(run_id):
+    return f"{CG_XML_DIR}/schedule.{run_id}.txt"
+
+
+CG_LS = 12
+CG_BOUNDARY = "1 1 1 1"
+CG_TWIST = "0 0 0 0"
+
+# Actions, from the Frontier/CG/*.tmp.xml examples (2026-10-14). Light is
+# Mobius; strange and charm are scaled Shamir (ScaledDWF, scale = b + c = 2).
+CG_ACTIONS = {
+    "l": dict(kind="mobius", mass=0.000678, M5=1.8, b=1.5, c=0.5),
+    "s": dict(kind="scaled", mass=0.02661, M5=1.8, scale=2),
+    "c": dict(kind="scaled", mass=0.3326, M5=1.8, scale=2),
+}
+
+# Light deflation: the coarse eigenpack, and the BLAS guesser built from it.
+CG_EIGENPACK = dict(
+    filestem="/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/converted/vec",
+    size_fine=200, size_coarse=2000, block_size="4 4 4 4 12")
+CG_DEFLATION_SIZE = 2000
+
+# Solver settings per (flavour, accuracy), from the same examples. Light runs
+# the batched split-grid solver and so has maxPatchup and updateResidual;
+# strange and charm run the single-RHS solver, which has neither. Light
+# deflation: the sloppy solve takes the outer guess only, the exact solve both.
+# Light sloppy is 400 inner iterations (decided 2026-10-14; the example still
+# has 450) -- fixed across configurations, see plans/CG section 13.1.
+CG_SOLVERS = {
+    ("l", "sloppy"): dict(max_inner=400, max_outer=1, max_patchup=1,
+                          residual=1e-8, update_residual=False, if_cgd=False,
+                          inner_guess=False),
+    ("l", "exact"):  dict(max_inner=400, max_outer=20, max_patchup=100,
+                          residual=1.55e-9, update_residual=True, if_cgd=True,
+                          inner_guess=True),
+    ("s", "sloppy"): dict(max_inner=400, max_outer=1, residual=1e-8,
+                          if_cgd=False),
+    ("s", "exact"):  dict(max_inner=500, max_outer=10, residual=1.65e-9,
+                          if_cgd=True),
+    ("c", "sloppy"): dict(max_inner=100, max_outer=1, residual=1e-8,
+                          if_cgd=False),
+    ("c", "exact"):  dict(max_inner=120, max_outer=10, residual=4e-9,
+                          if_cgd=True),
+}
+
+# Sources per solver call. Light: one per split-grid partition (64 nodes,
+# --batched-solver-split 2.2.2.4 -> 16 partitions). Strange and charm are
+# unbatched (A2AHighModeV).
+CG_BATCH_SIZE = {"l": 16, "s": 0, "c": 0}
+CG_NODES_PER_SRUN = {"l": 64, "s": 4, "c": 4}
+
+# Per-configuration layout: one (n_sloppy, n_exact) pair per srun. The sloppy
+# stream is the 9 sloppy hits in CG_SLOPPY_HIT_ORDER, the exact stream the AMA
+# hit; each srun takes the next n vectors of each, cut into per-hit ranges.
+# Balanced on total time per source (CG + write) -- plans/CG section 13.
+CG_LAYOUT = {
+    # 4-node sruns, exact/sloppy ~2: 27 sloppy + 6 exact = 132 nodes.
+    "c": [(512, 0)] * 27 + [(0, 256)] * 6,
+    # 4-node sruns, exact/sloppy ~3 (option A): 36 + 12 = 192 nodes.
+    "s": [(384, 0)] * 36 + [(0, 128)] * 12,
+    # 64-node sruns: the exact hit plus 1.5 sloppy hits, then 3.75 hits twice.
+    # From one-batch timings at 64 nodes, no read-back (2026-10-15): sloppy
+    # 38.23 s and exact 86.4 s per batch of 16, so 3.83 h per srun.
+    "l": [(2304, 1536), (5760, 0), (5760, 0)],
+}
+
+# Light puts the AMA sloppy hit first so that it lands in the same srun as its
+# exact solve: one noise load, freed after both.
+CG_SLOPPY_HIT_ORDER = {
+    "l": [AMA_HIT] + list(range(N_HIT)),
+    "s": list(range(N_HIT)) + [AMA_HIT],
+    "c": list(range(N_HIT)) + [AMA_HIT],
+}
+
+
 # --- lattice geometry -----------------------------------------------------
 # Needed by offline readers of raw propagator dumps (Frontier/diff_loop_prop.py),
 # which have no Grid to ask. N_T is also N_HIGH / N_SC by construction, since

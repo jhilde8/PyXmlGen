@@ -40,7 +40,8 @@ def _xml_scalar(val):
 # serializes to a well-formed "true"/"false" that only fails when Hadrons
 # parses the job on the cluster, reporting "numerical conversion failure on
 # 'false' (typeid: j)" against whichever unsigned int field it landed on.
-BOOL_OPTIONS = {"multiFile", "timeSliceIO"}
+BOOL_OPTIONS = {"multiFile", "timeSliceIO", "ifCGD", "updateResidual",
+                "redBlack", "orthogonalise"}
 
 
 def _add_option(parent, key, val):

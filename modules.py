@@ -172,6 +172,84 @@ def load_nersc(name, file):
     return module(name, "MIO::LoadNersc", file=file)
 
 
+# --- CG: actions, deflation, solvers, high-mode V ---------------------------
+
+def gauge_single_precision_cast(name, field):
+    return module(name, "MUtilities::GaugeSinglePrecisionCast", field=field)
+
+
+def mobius_dwf(name, gauge, Ls, mass, M5, b, c, boundary, twist, single=False):
+    # single=True is the MobiusDWFF registration, for the inner solve of a
+    # mixed-precision CG; hand it the single-precision gauge field.
+    return module(name, "MAction::MobiusDWFF" if single else "MAction::MobiusDWF",
+                  gauge=gauge, Ls=Ls, mass=mass, M5=M5, b=b, c=c,
+                  boundary=boundary, twist=twist)
+
+
+def scaled_dwf(name, gauge, Ls, mass, M5, scale, boundary, twist, single=False):
+    return module(name, "MAction::ScaledDWFF" if single else "MAction::ScaledDWF",
+                  gauge=gauge, Ls=Ls, mass=mass, M5=M5, scale=scale,
+                  boundary=boundary, twist=twist)
+
+
+def load_coarse_eigenpack_200f(name, filestem, multi_file, size_fine,
+                               size_coarse, red_black, Ls, block_size,
+                               orthogonalise, gauge_xform=""):
+    # block_size is a std::string in the Par struct ("4 4 4 4 12"), not a
+    # vector: a list here would serialize to <elem> children and fail to parse.
+    return module(name, "MIO::LoadCoarseFermionEigenPack200F",
+                  filestem=filestem, multiFile=multi_file, sizeFine=size_fine,
+                  sizeCoarse=size_coarse, redBlack=red_black, Ls=Ls,
+                  blockSize=block_size, orthogonalise=orthogonalise,
+                  gaugeXform=gauge_xform)
+
+
+def coarse_deflation_blas_200f(name, eigen_pack, size):
+    return module(name, "MGuesser::CoarseDeflationBLAS200F",
+                  eigenPack=eigen_pack, size=size)
+
+
+def deflation_src_cast(name, guesser):
+    # Double-precision guesser wrapping a single-precision one: casts the
+    # source down, guesses, casts the guess back up.
+    return module(name, "MGuesser::DeflationSrcCastEPackF", guesser=guesser)
+
+
+def mixed_precision_rb_prec_cg(name, inner_action, outer_action, max_inner,
+                               max_outer, residual, if_cgd, inner_guesser="",
+                               outer_guesser=""):
+    return module(name, "MSolver::MixedPrecisionRBPrecCG",
+                  innerAction=inner_action, outerAction=outer_action,
+                  maxInnerIteration=max_inner, maxOuterIteration=max_outer,
+                  residual=residual, innerGuesser=inner_guesser,
+                  outerGuesser=outer_guesser, ifCGD=if_cgd)
+
+
+def mixed_precision_rb_prec_cg_batched(name, inner_action, outer_action,
+                                       max_inner, max_outer, max_patchup,
+                                       residual, update_residual, if_cgd,
+                                       inner_guesser="", outer_guesser=""):
+    # The split-grid layout comes from --batched-solver-split on the command
+    # line, not from here.
+    return module(name, "MSolver::MixedPrecisionRBPrecCGBatched",
+                  innerAction=inner_action, outerAction=outer_action,
+                  maxInnerIteration=max_inner, maxOuterIteration=max_outer,
+                  maxPatchupIteration=max_patchup, residual=residual,
+                  innerGuesser=inner_guesser, outerGuesser=outer_guesser,
+                  updateResidual=update_residual, ifCGD=if_cgd)
+
+
+def a2a_high_mode_batched_v(name, noise, action, solver, output, init_vec=0,
+                            n_vec=0, batch_size=0):
+    # batch_size sources per solver call (0 or 1 = unbatched); must divide the
+    # number of vectors this run computes. Each V is written at
+    # <output>.<traj>/elem<i>.bin with i the noise vector index, so ranges of
+    # one hit computed in different runs land in the same directory.
+    return module(name, "MSolver::A2AHighModeBatchedV",
+                  noise=noise, action=action, solver=solver, output=output,
+                  initVec=init_vec, nVec=n_vec, batchSize=batch_size)
+
+
 def ape_smear(name, gauge, alpha, N, orthog_axis=3):
     return module(name, "MGauge::APESmear",
                   gauge=gauge, alpha=alpha, N=N, orthog_axis=orthog_axis)
