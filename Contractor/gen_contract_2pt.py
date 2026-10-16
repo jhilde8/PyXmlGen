@@ -36,7 +36,12 @@ correlator: field, accuracy, smearing, then momentum,
 with the full smearing rung tag, the same string the meson field directories
 carry. Momentum tags are filename-safe (m for minus); ioname() renders the raw
 integers A2AMesonField used for the HDF5 group. Every stem is distinct, so all
-par files of a preset share one output directory.
+par files of a preset share one correlator directory -- averaged and _noavg
+included, since the per-source files carry _dt_<dt>.
+
+Par files all land in output/contractor/ as par.<tag>.xml, tag being
+2pt_<momentum> plus trailing modifiers (_ama, _noavg). The tag also names the
+job's diskVectorDir, so tag, par file, scratch and log line up.
 
 nLow belongs to a field's DENSE (row) axis, its LEFT leg -- W_s for sl, W_l for
 ls and pi. It does not depend on the hit count.
@@ -114,7 +119,7 @@ def momenta(channel):
             yield mom_tag(mom), products
 
 
-def build(tag, products, preset, out_dir, translation_average):
+def build(tag, products, preset, translation_average):
     """One par file: every product at this momentum, for every accuracy and
     smearing state. A matrix used twice -- the pion at p000, whose two legs are
     the same field -- is declared once.
@@ -126,8 +131,8 @@ def build(tag, products, preset, out_dir, translation_average):
     divides by translations.size(), the per-source path does not."""
     job = ContractorJob(
         nt=config.N_T,
-        disk_vector_dir=f"{config.CONTRACTION_ROOT}/dv/{out_dir}_{tag}",
-        output=f"{config.CONTRACTION_ROOT}/{out_dir}",
+        disk_vector_dir=f"{config.CONTRACTION_ROOT}/dv/{tag}",
+        output=f"{config.CONTRACTION_ROOT}/{preset['out']}",
         traj_start=TRAJ, traj_end=TRAJ + 1, traj_step=1,
         n_hit=preset["n_hit"])
     declared = set()
@@ -164,20 +169,24 @@ def main():
     args = parser.parse_args()
 
     preset = PRESETS["ama" if args.ama else "production"]
-    out_dir = preset["out"] + ("_bysource" if args.no_average else "")
-    par_dir = Path(config.OUTPUT_ROOT) / out_dir
+    par_dir = Path(config.OUTPUT_ROOT) / "contractor"
+
+    # The job tag names the par file, the job's diskVectorDir, and -- by the
+    # submission scripts' convention -- the log. Modifiers trail the momentum.
+    suffix = ("_ama" if args.ama else "") + ("_noavg" if args.no_average else "")
 
     n_files = 0
-    for tag, products in momenta(args.channel):
-        build(tag, products, preset, out_dir, not args.no_average).write(
-            par_dir / f"par.2pt_{tag}.xml")
+    for mom, products in momenta(args.channel):
+        tag = f"2pt_{mom}{suffix}"
+        build(tag, products, preset, not args.no_average).write(
+            par_dir / f"par.{tag}.xml")
         n_files += 1
 
     print(f"wrote {n_files} par files to {par_dir}"
           f"   (nHit = {preset['n_hit']}, {len(smearings())} smearing states, "
           f"{len(preset['accuracies'])} accuracy(ies))")
     print(f"  meson fields  {preset['base']}/<stem>.{TRAJ}/")
-    print(f"  correlators   {config.CONTRACTION_ROOT}/{out_dir}/")
+    print(f"  correlators   {config.CONTRACTION_ROOT}/{preset['out']}/")
     print("\nThe <output> directory must exist before the run: saveCorrelator"
           "\ncalls makeFileDir(dir), which creates dirname(dir) -- the parent --"
           "\nand never the directory itself.")
