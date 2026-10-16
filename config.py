@@ -15,6 +15,13 @@ N_HIT = 8
 # same noise stem, different vector tree (VW_SLOPPY / VW_EXACT).
 AMA_HIT = N_HIT
 
+# Flavours solved exact on every hit, the AMA hit included, so they have one
+# vector set and no sloppy/exact distinction. Charm enters only through its
+# loop's GIM subtraction against the light loop, so with one charm loop in both
+# AMA terms it cancels from the correction; the exact solve costs ~18% more per
+# source than sloppy, roughly what dropping the AMA hit's duplicate saves.
+EXACT_ONLY_FLAVORS = {"c"}
+
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
 VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
@@ -27,8 +34,10 @@ LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
 # High modes: per flavor, per hit, one file per vector. The tree is split by
 # solve accuracy: every sloppy hit under VW_SLOPPY as "<flavor><hit>_v" /
 # "<flavor><hit>_w", and the AMA hit's exact solve under VW_EXACT as
-# "<flavor><hit>_exact". The loaders take a stem and one extension per hit,
-# which is what high_stem() and high_extension() below produce.
+# "<flavor><hit>_exact". An EXACT_ONLY_FLAVORS flavour has every hit under
+# VW_EXACT as "<flavor><hit>_v", whatever accuracy is asked for. The loaders
+# take a stem and one extension per hit, which is what high_stem() and
+# high_extension() below produce.
 N_HIGH = 1536
 VW_SLOPPY = f"{VW_BASE}/sloppy"
 VW_EXACT = f"{VW_BASE}/exact"
@@ -60,14 +69,23 @@ def low_filestem(flavor, vw):
     return f"{LOW_VW}/{flavor}_lo_{vw}"
 
 
-def high_stem(exact=False):
+def high_stem(flavor, exact=False):
     """Directory the V/W loaders prepend to each hit's extension."""
-    return f"{VW_EXACT}/" if exact else f"{VW_SLOPPY}/"
+    if exact or flavor in EXACT_ONLY_FLAVORS:
+        return f"{VW_EXACT}/"
+    return f"{VW_SLOPPY}/"
 
 
 def high_extension(flavor, hit, vw="v", exact=False):
-    """One hit's high-mode block under high_stem(exact). The exact solve is a V
-    only: W is the raw noise, which the sloppy and exact sets share."""
+    """One hit's high-mode block under high_stem(flavor, exact). The exact
+    solve is a V only: W is the raw noise, which the sloppy and exact sets
+    share. An EXACT_ONLY_FLAVORS flavour has one V per hit, so `exact` does not
+    change its name."""
+    if flavor in EXACT_ONLY_FLAVORS:
+        if vw != "v":
+            raise ValueError(
+                f"no W files for '{flavor}{hit}': W is the raw noise")
+        return f"{flavor}{hit}_v"
     if exact:
         if vw != "v":
             raise ValueError(
@@ -140,8 +158,6 @@ CG_SOLVERS = {
                           if_cgd=False),
     ("s", "exact"):  dict(max_inner=500, max_outer=10, residual=1.65e-9,
                           if_cgd=True),
-    ("c", "sloppy"): dict(max_inner=100, max_outer=1, residual=1e-8,
-                          if_cgd=False),
     ("c", "exact"):  dict(max_inner=120, max_outer=10, residual=4e-9,
                           if_cgd=True),
 }
@@ -153,18 +169,21 @@ CG_BATCH_SIZE = {"l": 16, "s": 0, "c": 0}
 CG_NODES_PER_SRUN = {"l": 64, "s": 4, "c": 4}
 
 # Per-configuration layout: one (n_sloppy, n_exact) pair per srun. The sloppy
-# stream is the 9 sloppy hits in CG_SLOPPY_HIT_ORDER, the exact stream the AMA
-# hit; each srun takes the next n vectors of each, cut into per-hit ranges.
-# Balanced on total time per source (CG + write) -- plans/CG section 13.
+# stream is the hits in CG_SLOPPY_HIT_ORDER, the exact stream those in
+# CG_EXACT_HIT_ORDER; each srun takes the next n vectors of each, cut into
+# per-hit ranges. Balanced on total time per source (CG + write) --
+# plans/CG section 13. Timings per source on 4 nodes, write 3.0 s/vector
+# (2026-10-16): strange sloppy 29.95 s, exact 71.98 s; charm exact 17.14 s.
 CG_LAYOUT = {
-    # 4-node sruns, exact/sloppy ~2: 27 sloppy + 6 exact = 132 nodes.
-    "c": [(512, 0)] * 27 + [(0, 256)] * 6,
-    # 4-node sruns, exact/sloppy ~3 (option A): 36 + 12 = 192 nodes.
-    "s": [(384, 0)] * 36 + [(0, 128)] * 12,
-    # 64-node sruns: the exact hit plus 1.5 sloppy hits, then 3.75 hits twice.
-    # From one-batch timings at 64 nodes, no read-back (2026-10-15): sloppy
-    # 38.23 s and exact 86.4 s per batch of 16, so 3.83 h per srun.
-    "l": [(2304, 1536), (5760, 0), (5760, 0)],
+    # 4-node sruns, exact only: 27 x 512 = 108 nodes, 2.86 h.
+    "c": [(0, 512)] * 27,
+    # 4-node sruns: 32 sloppy (3.95 h) + 8 exact (4.00 h) = 160 nodes.
+    "s": [(432, 0)] * 32 + [(0, 192)] * 8,
+    # 64-node sruns: the exact hit plus 2496 sloppy, then 5664 sloppy twice.
+    # Fixed-tolerance batch of 16 (2026-10-16): sloppy 31.8 s, exact 71.5 s
+    # (compute + noise), plus 16 writes at 0.21-1.24 s/vector. 2496 balances
+    # at 0.37 s/vector, 3.7 h per srun.
+    "l": [(2496, 1536), (5664, 0), (5664, 0)],
 }
 
 # Light puts the AMA sloppy hit first so that it lands in the same srun as its
@@ -172,6 +191,11 @@ CG_LAYOUT = {
 CG_SLOPPY_HIT_ORDER = {
     "l": [AMA_HIT] + list(range(N_HIT)),
     "s": list(range(N_HIT)) + [AMA_HIT],
+    "c": [],
+}
+CG_EXACT_HIT_ORDER = {
+    "l": [AMA_HIT],
+    "s": [AMA_HIT],
     "c": list(range(N_HIT)) + [AMA_HIT],
 }
 

@@ -1,17 +1,18 @@
 """High-mode V solves: one XML per srun, every srun of a flavour's configuration.
 
     gen_cg.py l              light: 3 sruns of 64 nodes
-    gen_cg.py s c            strange and charm: 48 and 33 sruns of 4 nodes
+    gen_cg.py s c            strange and charm: 40 and 27 sruns of 4 nodes
     gen_cg.py l s c          all three
 
-Work per configuration and flavour: the 9 sloppy hits (production hits
-0..N_HIT-1 and the AMA hit) and the AMA hit exact, N_HIGH noise vectors each.
+Work per configuration and flavour, N_HIGH noise vectors per hit: light and
+strange solve the 9 hits sloppy (production hits 0..N_HIT-1 and the AMA hit)
+and the AMA hit exact; charm (config.EXACT_ONLY_FLAVORS) solves all 9 exact.
 config.CG_LAYOUT gives every srun an (n_sloppy, n_exact) pair; srun_layout.cut
 turns the sloppy stream (hits in config.CG_SLOPPY_HIT_ORDER) and the exact
-stream (the AMA hit) into per-hit ranges, and every range becomes one high-mode
-V module with initVec / nVec. The layout is balanced on total time per source
-(CG plus write); see plans/CG section 13, where the light cut also has a closed
-form for re-balancing from measured costs.
+stream (config.CG_EXACT_HIT_ORDER) into per-hit ranges, and every range becomes
+one high-mode V module with initVec / nVec. The layout is balanced on total
+time per source (CG plus write); see plans/CG section 13, where the light cut
+also has a closed form for re-balancing from measured costs.
 
 Noise is loaded, never generated: a hit split across sruns, and the AMA hit's
 sloppy and exact solves, must see the same sources, and sruns generating their
@@ -19,9 +20,9 @@ own would all draw the same noise from the same runId and trajectory. The noise
 job runs before the CG and leaves every hit at config.noise_filestem. A hit's
 noise is loaded once per srun, right before its first range.
 
-Output goes to config.high_stem(exact) + config.high_extension(...):
-vw/sloppy/<f><h>_v and vw/exact/<f>8_exact, the names every reader of the V
-tree uses. A range writes elem<i>.bin with i the noise vector index, so a hit
+Output goes to config.high_stem(...) + config.high_extension(...):
+vw/sloppy/<f><h>_v and vw/exact/<f>8_exact, or vw/exact/c<h>_v for charm, the
+names every reader of the V tree uses. A range writes elem<i>.bin with i the noise vector index, so a hit
 cut across sruns still lands in one directory.
 
 Light (config.FLAVOR_HAS_LOW) is deflated: the coarse eigenpack and ONE
@@ -107,7 +108,7 @@ def add_range(job, flavor, acc, seg, solver, action):
 
     ext = config.high_extension(flavor, seg.hit, "v", exact)
     name = f"v_{ext}_{seg.first}"
-    output = config.high_stem(exact) + ext
+    output = config.high_stem(flavor, exact) + ext
     if batch > 1:
         # The module checks this too, but only once the job is running.
         if seg.count % batch:
@@ -147,7 +148,8 @@ def build_flavor(flavor):
     layout = config.CG_LAYOUT[flavor]
     sloppy = cut(config.CG_SLOPPY_HIT_ORDER[flavor], config.N_HIGH,
                  [n for n, _ in layout])
-    exact = cut([config.AMA_HIT], config.N_HIGH, [n for _, n in layout])
+    exact = cut(config.CG_EXACT_HIT_ORDER[flavor], config.N_HIGH,
+                [n for _, n in layout])
     return [(build_srun(flavor, k, s, e), s, e)
             for k, (s, e) in enumerate(zip(sloppy, exact))]
 

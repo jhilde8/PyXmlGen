@@ -111,7 +111,7 @@ At 256 nodes the ama job holds two accuracies of a one-hit set, 3 MiB a field:
     V_s sloppy + exact   3072           9.0
     W_l                  2012           5.9
     W_s                    12           0.04
-    six loops                           0.2    (144 cplx/site, 36 MiB each)
+    five loops                          0.2    (144 cplx/site, 36 MiB each)
                                        ------
                                        35.9 GiB of 59.6
 
@@ -140,7 +140,7 @@ overhead dominates; the ama job did not finish its sparsening within an hour at
 
 Schedule (module order == schedule order):
 
-    gauge, gauge_APE, the charm loop per accuracy   a bad path fails early
+    gauge, gauge_APE, the charm loop                a bad path fails early
     light: noise, W, then V and loop per accuracy, each loop saved
     strange: same
     mf_ls_ww                                        once, all passes use it
@@ -258,14 +258,15 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
                         config.ORTHOG_AXIS))
 
     # The loops feed heavy_fields only, so a smeared-only job builds none of
-    # them and does not load the charm one either.
+    # them and does not load the charm one either. Charm is exact on every hit,
+    # so one loop serves every accuracy.
     loops = {}
     v = {}
     if not smeared_only:
+        name = named("loop_c")
+        job.add(M.load_prop(name, f"{loop_root}/{name}",
+                            format=config.PROP_IO_FORMAT))
         for acc, _ in accuracies:
-            name = named("loop_c", acc)
-            job.add(M.load_prop(name, f"{loop_root}/{name}",
-                                format=config.PROP_IO_FORMAT))
             loops[("c", acc)] = name
 
     # --- legs and loops, one flavor at a time ------------------------------

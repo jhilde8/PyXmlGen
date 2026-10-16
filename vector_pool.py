@@ -112,7 +112,7 @@ class VectorPool:
                                for h in hits]
             self.job.add(M.load_combined_a2a_vecs_v(
                 name, low_filestem, config.N_LOW if has_low else 0,
-                config.high_stem(exact), high_extensions, config.N_HIGH,
+                config.high_stem(flavor, exact), high_extensions, config.N_HIGH,
                 n_hit=len(hits)))
         self._combined[key] = name
         return name

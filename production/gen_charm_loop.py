@@ -58,12 +58,14 @@ Two jobs come out of this file, picked by the same tag gen_meson_fields.py
 takes:
 
     gen_charm_loop.py h8      the production chain above
-    gen_charm_loop.py ama     loop_c_ama_sloppy and loop_c_ama_exact
+    gen_charm_loop.py ama     loop_c_ama, the AMA hit at nHit = 1
 
-The AMA pair is one hit each at nHit = 1, kept out of the AMA contraction job
-for the same reason charm is kept out of the 512-node one: nothing else there
-loads charm vectors, so the contraction job should not spend its nodes on a
-pure-IO step.
+Charm is solved exact on every hit (config.EXACT_ONLY_FLAVORS), so the AMA hit
+has one charm loop, which the contraction job uses in both its sloppy and its
+exact pass; the charm term then cancels from the correction. It is kept out of
+the AMA contraction job for the same reason charm is kept out of the 512-node
+one: nothing else there loads charm vectors, so the contraction job should not
+spend its nodes on a pure-IO step.
 """
 import argparse
 import re
@@ -92,15 +94,15 @@ def add_noise_and_w(job, tag, hit):
     return w
 
 
-def add_v(job, name, hit, n_hit, exact=False):
+def add_v(job, name, hit, n_hit):
     """One hit's expanded high-mode V block. n_hit is the GLOBAL hit count of
     the estimator this block belongs to, not the number of extensions read
     here -- the 1/nHit factor belongs to the estimator, not to how the load is
     chunked -- which is why the loop applies none."""
     job.add(M.load_combined_a2a_vecs_v(
         name, low_filestem="", n_low=0,
-        high_stem=config.high_stem(exact),
-        high_extensions=[config.high_extension(FLAVOR, hit, "v", exact)],
+        high_stem=config.high_stem(FLAVOR),
+        high_extensions=[config.high_extension(FLAVOR, hit, "v")],
         high_size=config.N_HIGH, n_hit=n_hit))
     return name
 
@@ -135,29 +137,22 @@ def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
 
 
 def build_ama_job(hit=config.AMA_HIT, run_id=None, loop_root=config.LOOP_ROOT):
-    """The two charm loops of the AMA correction hit, sloppy and exact.
+    """The charm loop of the AMA correction hit.
 
-    No chain: each accuracy is a single-hit estimator, so nHit = 1 and the two
-    loops are independent. They share one noise and one dense W -- W is the raw
-    noise, identical in both sets -- and the sloppy V is released before the
-    exact one loads, so the footprint is the 32-node job's one hit either way.
-
-    Named for the correction, not the hit index (loop_c_ama_sloppy), since
-    nothing else in the campaign uses hit config.AMA_HIT. The hit index still
-    picks the files.
+    No chain: the correction is a single-hit estimator, so nHit = 1. Named for
+    the correction, not the hit index (loop_c_ama), since nothing else in the
+    campaign uses hit config.AMA_HIT. The hit index still picks the files.
     """
     run_id = run_id or "loop.charm.ama"
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
               graph_file=config.GRAPH)
 
     w = add_noise_and_w(job, "ama", hit)
-    for acc, exact in (("sloppy", False), ("exact", True)):
-        suffix = "_exact" if exact else ""
-        v = add_v(job, f"v_{FLAVOR}_ama{suffix}", hit, 1, exact=exact)
-        loop = add_loop(job, f"loop_{FLAVOR}_ama_{acc}", v, w)
-        job.add(M.write_prop(f"save_{loop}", prop=loop,
-                             file=f"{loop_root}/{loop}",
-                             format=config.PROP_IO_FORMAT))
+    v = add_v(job, f"v_{FLAVOR}_ama", hit, 1)
+    loop = add_loop(job, f"loop_{FLAVOR}_ama", v, w)
+    job.add(M.write_prop(f"save_{loop}", prop=loop,
+                         file=f"{loop_root}/{loop}",
+                         format=config.PROP_IO_FORMAT))
 
     return job, run_id
 
@@ -167,7 +162,7 @@ def main():
         description="Generate one charm loop job.")
     parser.add_argument("tag", nargs="?", default=f"h{config.N_HIT}",
                         help="hN for the N-hit chain, or ama for the "
-                             "correction hit's sloppy and exact loops")
+                             "correction hit's loop")
     args = parser.parse_args()
 
     if args.tag == "ama":

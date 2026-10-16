@@ -117,7 +117,7 @@ def add_hit(job, flavor, hit, sparse_root, accuracies=(False,)):
         ext = config.high_extension(flavor, hit, "v", exact)
         v = f"v_{ext}"
         job.add(M.load_combined_a2a_vecs_v(
-            v, low_filestem="", n_low=0, high_stem=config.high_stem(exact),
+            v, low_filestem="", n_low=0, high_stem=config.high_stem(flavor, exact),
             high_extensions=[ext], high_size=config.N_HIGH, n_hit=1))
         sparsen(job, v, f"{sparse_root}/{ext}")
 
