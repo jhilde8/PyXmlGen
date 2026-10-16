@@ -35,7 +35,8 @@ parameter. Strange and charm run the single-RHS solver with no deflation.
 TRAJ_START / TRAJ_END stay as placeholders for the submission script to
 substitute, so one set of XMLs serves any number of configurations.
 
-Also written per flavour: layout.cg.<f>.txt, one line per srun with its node
+Each srun's run_id is CG<f>.NN (par.CGl.00.xml, schedule.CGl.00.txt). Also
+written per flavour: layout.CG<f>.txt, one line per srun with its node
 count and ranges, to check the cut and to drive the submission script.
 """
 import argparse
@@ -122,7 +123,7 @@ def add_range(job, flavor, acc, seg, solver, action):
 
 
 def build_srun(flavor, index, sloppy, exact):
-    run_id = f"cg.{flavor}.s{index:02d}"
+    run_id = f"CG{flavor}.{index:02d}"
     job = Job(run_id, schedule_file=config.cg_schedule_file(run_id),
               graph_file=config.CG_GRAPH)
 
@@ -177,7 +178,7 @@ def main():
             lines.append(f"{run_id} nodes={config.CG_NODES_PER_SRUN[flavor]} "
                          f"sloppy={sum(g.count for g in sloppy)} "
                          f"exact={sum(g.count for g in exact)} | {ranges}")
-        (out_dir / f"layout.cg.{flavor}.txt").write_text("\n".join(lines) + "\n")
+        (out_dir / f"layout.CG{flavor}.txt").write_text("\n".join(lines) + "\n")
         nodes = len(sruns) * config.CG_NODES_PER_SRUN[flavor]
         print(f"wrote {len(sruns)} sruns for '{flavor}' ({nodes} nodes) "
               f"to {out_dir}")
