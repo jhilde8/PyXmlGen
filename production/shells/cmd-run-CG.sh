@@ -14,8 +14,8 @@
 # every configuration in CONFS, all running at once. -N above must be
 #   nodes per srun x number of sruns x number of configurations
 # per configuration: l 3 x 64 = 192, s 40 x 4 = 160, c 27 x 4 = 108.
-# Srun K runs on nodes [K*NODES, (K+1)*NODES) of the allocation (srun -r);
-# line K*NODES of nodes.<jobid>.txt is its first node.
+# Srun K runs on lines [K*NODES, (K+1)*NODES) of nodes.<jobid>.txt, named
+# with srun -w: unlike -r, a step cannot slide onto another srun's nodes.
 
 if [ ! -f select_gpu ]
 then
@@ -96,8 +96,9 @@ do
 
         sed "s/TRAJ_START/$CONF/g; s/TRAJ_END/$(($CONF + 1))/g" $TMP > $XML
 
-        echo "srun $K: $RUN conf $CONF on nodes $((K * NODES))-$(((K + 1) * NODES - 1))" > $LOG
-        srun -N $NODES -n $RANKS -r $((K * NODES)) --cpus-per-task=7 ./select_gpu $BIN $XML --mem=0 --shm $SHM --device-mem $DEV_MEM --grid $VOL --mpi $MPI_GEOM $SPLIT >> $LOG 2>&1 &
+        HOSTS=$(sed -n "$((K * NODES + 1)),$(((K + 1) * NODES))p" nodes.$SLURM_JOB_ID.txt | paste -sd,)
+        echo "srun $K: $RUN conf $CONF on nodes $((K * NODES))-$(((K + 1) * NODES - 1)): $HOSTS" > $LOG
+        srun -N $NODES -n $RANKS -w $HOSTS --exact --cpus-per-task=7 ./select_gpu $BIN $XML --mem=0 --shm $SHM --device-mem $DEV_MEM --grid $VOL --mpi $MPI_GEOM $SPLIT >> $LOG 2>&1 &
         K=$((K + 1))
     done
 done
