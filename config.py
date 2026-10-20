@@ -119,8 +119,8 @@ CG_XML_DIR = f"{CG_DIR}/xml"
 CG_GRAPH = f"{CG_DIR}/graph.gv"
 
 
-def cg_schedule_file(run_id):
-    return f"{CG_XML_DIR}/schedule.{run_id}.txt"
+def cg_schedule_file(run_id, flavor):
+    return f"{CG_XML_DIR}/CG{flavor}/schedule.{run_id}.txt"
 
 
 CG_LS = 12
@@ -158,7 +158,7 @@ CG_SOLVERS = {
                           if_cgd=False),
     ("s", "exact"):  dict(max_inner=500, max_outer=10, residual=1.65e-9,
                           if_cgd=True),
-    ("c", "exact"):  dict(max_inner=120, max_outer=10, residual=4e-9,
+    ("c", "exact"):  dict(max_inner=120, max_outer=10, residual=5e-9,
                           if_cgd=True),
 }
 

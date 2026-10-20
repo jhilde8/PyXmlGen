@@ -133,7 +133,7 @@ def build_srun(flavor, run_id, sloppy, exact, traj=None):
     """One srun's job over the given sloppy and exact segments. With traj None
     the trajectory stays as the TRAJ_START / TRAJ_END placeholders."""
     bounds = {} if traj is None else dict(traj_start=traj, traj_end=traj + 1)
-    job = Job(run_id, schedule_file=config.cg_schedule_file(run_id),
+    job = Job(run_id, schedule_file=config.cg_schedule_file(run_id,flavor),
               graph_file=config.CG_GRAPH, **bounds)
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))
