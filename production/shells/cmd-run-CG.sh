@@ -53,9 +53,11 @@ DEV_MEM=16000
 SHM=8192
 
 case $FLAVOR in
-    l) NODES=64; RANKS=512; MPI_GEOM=4.4.4.8; SPLIT="--batched-solver-split 2.2.2.4" ;;
+    l) NODES=64; RANKS=512; MPI_GEOM=4.4.4.8; SPLIT="--batched-solver-split 2.2.2.4 --shm-mpi 0" ;;
     s|c) NODES=4; RANKS=32; MPI_GEOM=2.2.2.4; SPLIT="" ;;
 esac
+# Light: --shm-mpi 0 keeps on-node halos in Grid's shm. Through MPI, the split
+# grid's on-node halos used MPICH GPU IPC and GPU-faulted after a few batches.
 
 #####################################################################################
 # paths
@@ -65,9 +67,11 @@ PREFIX=/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/CG
 BIN=/lustre/orion/phy157/world-shared/jhilde/Hadrons_nb/install/bin/HadronsXmlRun
 OUT_DIR=/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw
 
+XML_DIR=$PREFIX/xml/CG$FLAVOR
+
 # Templates only: the per-configuration copies (par.CGs.00.1540.xml) do not
 # match this pattern.
-TEMPLATES=($PREFIX/xml/par.CG$FLAVOR.[0-9][0-9].xml)
+TEMPLATES=($XML_DIR/par.CG$FLAVOR.[0-9][0-9].xml)
 
 mkdir -p $OUT_DIR/sloppy $OUT_DIR/exact
 lfs setstripe -c 16 -S 4M -p capacity $OUT_DIR/sloppy
@@ -91,14 +95,14 @@ do
     do
         RUN=$(basename $TMP .xml)
         RUN=${RUN#par.}
-        XML=$PREFIX/xml/par.$RUN.$CONF.xml
+        XML=$XML_DIR/par.$RUN.$CONF.xml
         LOG=log.$RUN.$CONF.txt
 
         sed "s/TRAJ_START/$CONF/g; s/TRAJ_END/$(($CONF + 1))/g" $TMP > $XML
 
         HOSTS=$(sed -n "$((K * NODES + 1)),$(((K + 1) * NODES))p" nodes.$SLURM_JOB_ID.txt | paste -sd,)
         echo "srun $K: $RUN conf $CONF on nodes $((K * NODES))-$(((K + 1) * NODES - 1)): $HOSTS" > $LOG
-        srun -N $NODES -n $RANKS -w $HOSTS --exact --cpus-per-task=7 ./select_gpu $BIN $XML --mem=0 --shm $SHM --device-mem $DEV_MEM --grid $VOL --mpi $MPI_GEOM $SPLIT >> $LOG 2>&1 &
+        srun -N $NODES -n $RANKS -w $HOSTS --cpus-per-task=7 ./select_gpu $BIN $XML --mem=0 --shm $SHM --device-mem $DEV_MEM --grid $VOL --mpi $MPI_GEOM $SPLIT >> $LOG 2>&1 &
         K=$((K + 1))
     done
 done

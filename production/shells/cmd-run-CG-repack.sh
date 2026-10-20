@@ -54,9 +54,11 @@ DEV_MEM=16000
 SHM=8192
 
 case $FLAVOR in
-    l) NODES=64; RANKS=512; MPI_GEOM=4.4.4.8; SPLIT="--batched-solver-split 2.2.2.4" ;;
+    l) NODES=64; RANKS=512; MPI_GEOM=4.4.4.8; SPLIT="--batched-solver-split 2.2.2.4 --shm-mpi 0" ;;
     s|c) NODES=4; RANKS=32; MPI_GEOM=2.2.2.4; SPLIT="" ;;
 esac
+# Light: --shm-mpi 0 keeps on-node halos in Grid's shm. Through MPI, the split
+# grid's on-node halos used MPICH GPU IPC and GPU-faulted after a few batches.
 
 #####################################################################################
 # paths
@@ -75,7 +77,7 @@ scontrol show hostnames $SLURM_JOB_NODELIST > nodes.$SLURM_JOB_ID.txt
 XMLS=()
 for CONF in "${CONFS[@]}"
 do
-    XMLS+=($PREFIX/xml/par.CG$FLAVOR.repack.[0-9][0-9].$CONF.xml)
+    XMLS+=($PREFIX/xml/CG$FLAVOR/par.CG$FLAVOR.repack.[0-9][0-9].$CONF.xml)
 done
 
 echo "$FLAVOR repack: ${#XMLS[@]} sruns x $NODES nodes" \
@@ -91,7 +93,7 @@ do
 
     HOSTS=$(sed -n "$((K * NODES + 1)),$(((K + 1) * NODES))p" nodes.$SLURM_JOB_ID.txt | paste -sd,)
     echo "srun $K: $RUN on nodes $((K * NODES))-$(((K + 1) * NODES - 1)): $HOSTS" > $LOG
-    srun -N $NODES -n $RANKS -w $HOSTS --exact --cpus-per-task=7 ./select_gpu $BIN $XML --mem=0 --shm $SHM --device-mem $DEV_MEM --grid $VOL --mpi $MPI_GEOM $SPLIT >> $LOG 2>&1 &
+    srun -N $NODES -n $RANKS -w $HOSTS --cpus-per-task=7 ./select_gpu $BIN $XML --mem=0 --shm $SHM --device-mem $DEV_MEM --grid $VOL --mpi $MPI_GEOM $SPLIT >> $LOG 2>&1 &
     K=$((K + 1))
 done
 
