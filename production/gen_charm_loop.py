@@ -1,4 +1,8 @@
-"""Charm A2A loop propagator, chained one hit at a time.
+"""Charm A2A loop propagators: the production chain and the AMA hit.
+
+    gen_charm_loop.py                 loop_c_h8 and loop_c_ama
+    gen_charm_loop.py h4              a 4-hit chain and loop_c_ama
+    gen_charm_loop.py --skip-ama      the chain only
 
 32 nodes, 256 ranks, high modes only, no sparsening.
 
@@ -54,18 +58,18 @@ cannot be used for a per-hit load.)
 The loop goes to Lustre, not node-local NVMe: MIO::WriteProp is a collective
 single-file write.
 
-Two jobs come out of this file, picked by the same tag gen_meson_fields.py
-takes:
-
-    gen_charm_loop.py h8      the production chain above
-    gen_charm_loop.py ama     loop_c_ama, the AMA hit at nHit = 1
+The AMA hit rides along in the same job, since it is one more hit of the same
+loads. It is not a link of the chain: the correction is a single-hit
+estimator, so its V loads at nHit = 1 and its loop starts from zero. It runs
+first, so the full noise -> W -> V -> loop -> write path is exercised on one
+hit and its output lands before the chain commits to the other eight. Memory
+is unchanged -- the AMA loop's write is its last consumer, so its hit is
+released before the chain's first loads.
 
 Charm is solved exact on every hit (config.EXACT_ONLY_FLAVORS), so the AMA hit
 has one charm loop, which the contraction job uses in both its sloppy and its
-exact pass; the charm term then cancels from the correction. It is kept out of
-the AMA contraction job for the same reason charm is kept out of the 512-node
-one: nothing else there loads charm vectors, so the contraction job should not
-spend its nodes on a pure-IO step.
+exact pass. The correction then carries no charm solver error, though the
+charm-loop EMF still enters it through its sloppy and exact V legs.
 """
 import argparse
 import re
@@ -115,12 +119,29 @@ def add_loop(job, name, v, w, input_loop=""):
     return name
 
 
-def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
+def add_ama(job, loop_root, hit=config.AMA_HIT):
+    """The charm loop of the AMA correction hit, at nHit = 1 and unchained.
+    Named for the correction, not the hit index (loop_c_ama), since nothing
+    else in the campaign uses hit config.AMA_HIT. The hit index still picks
+    the files."""
+    w = add_noise_and_w(job, "ama", hit)
+    v = add_v(job, f"v_{FLAVOR}_ama", hit, 1)
+    loop = add_loop(job, f"loop_{FLAVOR}_ama", v, w)
+    job.add(M.write_prop(f"save_{loop}", prop=loop,
+                         file=f"{loop_root}/{loop}",
+                         format=config.PROP_IO_FORMAT))
+
+
+def build_job(n_hit=config.N_HIT, ama=True, run_id=None,
+              loop_root=config.LOOP_ROOT):
     # run_id and loop_root are parameters so a benchmark can emit this exact
     # structure at a lower hit count without landing on production's output.
-    run_id = run_id or f"loop.charm.h{n_hit}"
+    run_id = run_id or f"loop.charm.h{n_hit}" + (".ama" if ama else "")
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
               graph_file=config.GRAPH)
+
+    if ama:
+        add_ama(job, loop_root)
 
     link = ""
     for h in range(n_hit):
@@ -136,42 +157,19 @@ def build_job(n_hit=config.N_HIT, run_id=None, loop_root=config.LOOP_ROOT):
     return job, run_id
 
 
-def build_ama_job(hit=config.AMA_HIT, run_id=None, loop_root=config.LOOP_ROOT):
-    """The charm loop of the AMA correction hit.
-
-    No chain: the correction is a single-hit estimator, so nHit = 1. Named for
-    the correction, not the hit index (loop_c_ama), since nothing else in the
-    campaign uses hit config.AMA_HIT. The hit index still picks the files.
-    """
-    run_id = run_id or "loop.charm.ama"
-    job = Job(run_id, schedule_file=config.schedule_file(run_id),
-              graph_file=config.GRAPH)
-
-    w = add_noise_and_w(job, "ama", hit)
-    v = add_v(job, f"v_{FLAVOR}_ama", hit, 1)
-    loop = add_loop(job, f"loop_{FLAVOR}_ama", v, w)
-    job.add(M.write_prop(f"save_{loop}", prop=loop,
-                         file=f"{loop_root}/{loop}",
-                         format=config.PROP_IO_FORMAT))
-
-    return job, run_id
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate one charm loop job.")
+        description="Generate the charm loop job.")
     parser.add_argument("tag", nargs="?", default=f"h{config.N_HIT}",
-                        help="hN for the N-hit chain, or ama for the "
-                             "correction hit's loop")
+                        help="hN for the N-hit chain")
+    parser.add_argument("--skip-ama", action="store_true",
+                        help="leave out the AMA hit's loop")
     args = parser.parse_args()
 
-    if args.tag == "ama":
-        job, run_id = build_ama_job()
-    else:
-        match = re.fullmatch(r"h(\d+)", args.tag)
-        if not match:
-            parser.error(f"tag '{args.tag}' is neither 'ama' nor 'hN'")
-        job, run_id = build_job(n_hit=int(match.group(1)))
+    match = re.fullmatch(r"h(\d+)", args.tag)
+    if not match:
+        parser.error(f"tag '{args.tag}' is not 'hN'")
+    job, run_id = build_job(n_hit=int(match.group(1)), ama=not args.skip_ama)
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"
     job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")
