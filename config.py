@@ -199,6 +199,27 @@ CG_EXACT_HIT_ORDER = {
     "c": list(range(N_HIT)) + [AMA_HIT],
 }
 
+# Seconds per solver call, CG plus writes: one batch of CG_BATCH_SIZE sources
+# for a batched flavour, one source otherwise. Same measurements as CG_LAYOUT;
+# light writes are taken at the 0.37 s/vector its layout balances at. Only
+# the ratios matter to gen_cg_repack.py's balance; the absolute values and
+# CG_STARTUP only set the walltime it prints.
+CG_COST = {
+    ("l", "sloppy"): 31.8 + 16 * 0.37,
+    ("l", "exact"):  71.5 + 16 * 0.37,
+    ("s", "sloppy"): 29.95 + 3.0,
+    ("s", "exact"):  71.98 + 3.0,
+    ("c", "exact"):  17.14 + 3.0,
+}
+
+# Seconds from srun start to the first solve. Light is the eigenpack load
+# (~950 s in the 2026-10-19 logs); strange and charm are not measured yet.
+CG_STARTUP = {"l": 950.0, "s": 0.0, "c": 0.0}
+
+# Size of one complete V file (elem<i>.bin): a double-precision 64^3 x 128
+# spin-colour field, 6442450944 bytes, plus the SciDAC record header.
+V_ELEM_BYTES = 6442453432
+
 
 # --- lattice geometry -----------------------------------------------------
 # Needed by offline readers of raw propagator dumps (Frontier/diff_loop_prop.py),

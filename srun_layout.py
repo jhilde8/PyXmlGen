@@ -8,6 +8,8 @@ list of per-hit ranges.
 """
 from dataclasses import dataclass
 
+import config
+
 
 @dataclass(frozen=True)
 class Segment:
@@ -42,3 +44,15 @@ def cut(hits, hit_size, counts):
                 h, pos = h + 1, 0
         out.append(segs)
     return out
+
+
+def cg_srun_ranges(flavor):
+    """config.CG_LAYOUT[flavor] as one (sloppy, exact) pair of segment lists
+    per srun: the original CG job, which gen_cg.py builds and the vector scan
+    checks against."""
+    layout = config.CG_LAYOUT[flavor]
+    sloppy = cut(config.CG_SLOPPY_HIT_ORDER[flavor], config.N_HIGH,
+                 [n for n, _ in layout])
+    exact = cut(config.CG_EXACT_HIT_ORDER[flavor], config.N_HIGH,
+                [n for _, n in layout])
+    return list(zip(sloppy, exact))

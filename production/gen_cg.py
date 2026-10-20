@@ -7,8 +7,8 @@
 Work per configuration and flavour, N_HIGH noise vectors per hit: light and
 strange solve the 9 hits sloppy (production hits 0..N_HIT-1 and the AMA hit)
 and the AMA hit exact; charm (config.EXACT_ONLY_FLAVORS) solves all 9 exact.
-config.CG_LAYOUT gives every srun an (n_sloppy, n_exact) pair; srun_layout.cut
-turns the sloppy stream (hits in config.CG_SLOPPY_HIT_ORDER) and the exact
+config.CG_LAYOUT gives every srun an (n_sloppy, n_exact) pair;
+srun_layout.cg_srun_ranges turns the sloppy stream (hits in config.CG_SLOPPY_HIT_ORDER) and the exact
 stream (config.CG_EXACT_HIT_ORDER) into per-hit ranges, and every range becomes
 one high-mode V module with initVec / nVec. The layout is balanced on total
 time per source (CG plus write); see plans/CG section 13, where the light cut
@@ -38,6 +38,9 @@ substitute, so one set of XMLs serves any number of configurations.
 Each srun's run_id is CG<f>.NN (par.CGl.00.xml, schedule.CGl.00.txt). Also
 written per flavour: layout.CG<f>.txt, one line per srun with its node
 count and ranges, to check the cut and to drive the submission script.
+
+After a failure, check_cg.py reports what is missing on disk and
+gen_cg_repack.py rebuilds the remainder with build_srun.
 """
 import argparse
 import sys
@@ -49,9 +52,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 import modules as M
 from hadrons_xml import Job
-from srun_layout import cut
+from srun_layout import cg_srun_ranges
 
 FLAVORS = ("l", "s", "c")
+
+
+def srun_run_id(flavor, index):
+    return f"CG{flavor}.{index:02d}"
 
 
 def add_deflation(job):
@@ -122,10 +129,12 @@ def add_range(job, flavor, acc, seg, solver, action):
                                   seg.first, seg.count))
 
 
-def build_srun(flavor, index, sloppy, exact):
-    run_id = f"CG{flavor}.{index:02d}"
+def build_srun(flavor, run_id, sloppy, exact, traj=None):
+    """One srun's job over the given sloppy and exact segments. With traj None
+    the trajectory stays as the TRAJ_START / TRAJ_END placeholders."""
+    bounds = {} if traj is None else dict(traj_start=traj, traj_end=traj + 1)
     job = Job(run_id, schedule_file=config.cg_schedule_file(run_id),
-              graph_file=config.CG_GRAPH)
+              graph_file=config.CG_GRAPH, **bounds)
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))
     job.add(M.gauge_single_precision_cast("gaugef", "gauge"))
@@ -146,13 +155,8 @@ def build_srun(flavor, index, sloppy, exact):
 
 
 def build_flavor(flavor):
-    layout = config.CG_LAYOUT[flavor]
-    sloppy = cut(config.CG_SLOPPY_HIT_ORDER[flavor], config.N_HIGH,
-                 [n for n, _ in layout])
-    exact = cut(config.CG_EXACT_HIT_ORDER[flavor], config.N_HIGH,
-                [n for _, n in layout])
-    return [(build_srun(flavor, k, s, e), s, e)
-            for k, (s, e) in enumerate(zip(sloppy, exact))]
+    return [(build_srun(flavor, srun_run_id(flavor, k), s, e), s, e)
+            for k, (s, e) in enumerate(cg_srun_ranges(flavor))]
 
 
 def describe(segs, flavor, exact=False):
