@@ -221,6 +221,57 @@ class ContractorJob:
         return xml_path
 
 
+def select_axis(low_size, modes_per_hit, n_hit_in, is_v, hits):
+    """One mode axis of an A2AMesonFieldSelectHits selection. The output axis
+    is the low block, unscaled, then the listed hits' blocks in list order; on
+    a V axis those are scaled by n_hit_in/len(hits), which trades the input's
+    1/n_hit_in for the output's own. The utility checks
+    low_size + n_hit_in*modes_per_hit against the dataset extent."""
+    return dict(lowSize=low_size, modesPerHit=modes_per_hit, nHitIn=n_hit_in,
+                isV=is_v, hits=list(hits))
+
+
+class SelectHitsJob:
+    """One A2AMesonFieldSelectHits par file: a <global> block and one
+    <selection> entry per HDF5 file.
+
+    The utility is serial and single-process, so a par file is the unit of
+    parallelism, as it is for the contractor. It refuses to overwrite an
+    existing output, so a rerun needs the previous outputs removed first."""
+
+    def __init__(self, traj_start, traj_end, traj_step=1):
+        self.root = ET.Element("grid")
+        glob = ET.SubElement(self.root, "global")
+        traj = ET.SubElement(glob, "trajCounter")
+        ET.SubElement(traj, "start").text = str(traj_start)
+        ET.SubElement(traj, "end").text = str(traj_end)
+        ET.SubElement(traj, "step").text = str(traj_step)
+        self.selection_el = ET.SubElement(self.root, "selection")
+        self.n = 0
+
+    def add(self, file, dataset, output, left, right):
+        el = ET.SubElement(self.selection_el, "elem")
+        _add_option(el, "file", file)
+        _add_option(el, "dataset", dataset)
+        _add_option(el, "output", output)
+        for side, axis in (("left", left), ("right", right)):
+            ax = ET.SubElement(el, side)
+            for key in ("lowSize", "modesPerHit", "nHitIn"):
+                _add_option(ax, key, axis[key])
+            # Not via _add_option, for the same reason as translationAverage.
+            ET.SubElement(ax, "isV").text = _xml_scalar(axis["isV"])
+            _add_option(ax, "hits", axis["hits"])
+        self.n += 1
+
+    def write(self, xml_path):
+        xml_path = Path(xml_path)
+        ET.indent(self.root, space="  ")
+        xml_path.parent.mkdir(parents=True, exist_ok=True)
+        ET.ElementTree(self.root).write(xml_path, encoding="unicode",
+                                        xml_declaration=True)
+        return xml_path
+
+
 class BubbleJob(ContractorJob):
     """A BubbleContractorDense par file.
 

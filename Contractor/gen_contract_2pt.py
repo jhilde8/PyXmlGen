@@ -58,9 +58,6 @@ from contractor_xml import ContractorJob
 
 TRAJ = 1520
 
-# Left (dense W) leg of each field, which is what sets nLow.
-LEFT_FLAVOR = {"pi": "l", "sl": "s", "ls": "l"}
-
 # The AMA job solves one hit twice (config.AMA_HIT), so its fields are 1-hit
 # and nHit must say so.
 PRESETS = {
@@ -78,7 +75,9 @@ def smearings():
 
 
 def n_low(field):
-    return config.N_LOW if config.FLAVOR_HAS_LOW[LEFT_FLAVOR[field]] else 0
+    """nLow of the field's left (dense W) leg."""
+    flavor = config.FIELD_LEGS[field][0][0]
+    return config.N_LOW if config.FLAVOR_HAS_LOW[flavor] else 0
 
 
 def ioname(gamma, mom):

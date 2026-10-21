@@ -64,6 +64,21 @@ def leg_size(flavor, vw, n_hit):
     return low + high * n_hit
 
 
+# (left leg, right leg) of each meson-field kind, a leg being (flavour, "v" or
+# "w"). The left leg is the field's row axis. emf covers all three loops and
+# cmf both gauge links: the loop and the links do not touch the mode axes.
+FIELD_LEGS = {
+    "pi":    (("l", "w"), ("l", "v")),
+    "ll":    (("l", "w"), ("l", "v")),
+    "sl":    (("s", "w"), ("l", "v")),
+    "ls":    (("l", "w"), ("s", "v")),
+    "ls_ww": (("l", "w"), ("s", "w")),
+    "emf":   (("s", "v"), ("l", "v")),
+    "cmf":   (("s", "v"), ("l", "v")),
+    "mix":   (("s", "v"), ("l", "v")),
+}
+
+
 def low_filestem(flavor, vw):
     assert FLAVOR_HAS_LOW[flavor]
     return f"{LOW_VW}/{flavor}_lo_{vw}"
