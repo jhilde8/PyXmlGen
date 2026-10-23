@@ -3,6 +3,7 @@
     gen_sparsen.py                          production hits, AMA hit, low block
     gen_sparsen.py --skip-h8                the AMA hit and the light low block
     gen_sparsen.py --skip-h8 --skip-low     the AMA hit only
+    gen_sparsen.py --io-split 2.2.2.1       loads read on split-grid partitions
 
 32 nodes, 256 ranks. Pure IO: every module is a load or an A2ACoarseGrid.
 
@@ -89,7 +90,7 @@ def sparsen(job, fine, stem):
                               config.COARSE_OFFSETS, stem))
 
 
-def add_low(job, flavor, sparse_root):
+def add_low(job, flavor, sparse_root, io_split=""):
     """A flavour's low-mode V and W, each loaded and sparsened on its own."""
     for vw in ("v", "w"):
         name = f"lo_{vw}_{flavor}"
@@ -97,11 +98,11 @@ def add_low(job, flavor, sparse_root):
         job.add(M.load_combined_a2a_vecs_v(
             name, low_filestem=config.low_filestem(flavor, vw),
             n_low=config.N_LOW, high_stem="", high_extensions=[],
-            high_size=0))
+            high_size=0, io_split=io_split))
         sparsen(job, name, f"{sparse_root}/{flavor}_lo_{vw}")
 
 
-def add_hit(job, flavor, hit, sparse_root, accuracies=(False,)):
+def add_hit(job, flavor, hit, sparse_root, accuracies=(False,), io_split=""):
     """One hit: its dense W, then its V once per accuracy (the exact flag)."""
     noise = f"noise_{flavor}_h{hit}"
     w = f"w_{flavor}_h{hit}"
@@ -118,13 +119,14 @@ def add_hit(job, flavor, hit, sparse_root, accuracies=(False,)):
         v = f"v_{ext}"
         job.add(M.load_combined_a2a_vecs_v(
             v, low_filestem="", n_low=0, high_stem=config.high_stem(flavor, exact),
-            high_extensions=[ext], high_size=config.N_HIGH, n_hit=1))
+            high_extensions=[ext], high_size=config.N_HIGH, n_hit=1,
+            io_split=io_split))
         sparsen(job, v, f"{sparse_root}/{ext}")
 
 
 def build_job(n_hit=config.N_HIT, h8=True, ama=True, low=True,
               flavors=SPARSEN_FLAVORS, run_id=None,
-              sparse_root=config.SPARSE_ROOT):
+              sparse_root=config.SPARSE_ROOT, io_split=""):
     # run_id and sparse_root are parameters so that benchmarks/ can emit this
     # exact structure without its output landing on top of production's -- the
     # per-hit directory names carry no hit-count tag.
@@ -147,15 +149,15 @@ def build_job(n_hit=config.N_HIT, h8=True, ama=True, low=True,
     if low:
         for flavor in flavors:
             if config.FLAVOR_HAS_LOW[flavor]:
-                add_low(job, flavor, sparse_root)
+                add_low(job, flavor, sparse_root, io_split)
 
     for flavor in flavors:
         if h8:
             for hit in range(n_hit):
-                add_hit(job, flavor, hit, sparse_root)
+                add_hit(job, flavor, hit, sparse_root, io_split=io_split)
         if ama:
             add_hit(job, flavor, config.AMA_HIT, sparse_root,
-                    accuracies=(False, True))
+                    accuracies=(False, True), io_split=io_split)
 
     return job, run_id
 
@@ -169,11 +171,15 @@ def main():
                         help="skip the AMA hit (sloppy and exact V, shared W)")
     parser.add_argument("--skip-low", action="store_true",
                         help="skip the light low-mode V and W")
+    parser.add_argument("--io-split", metavar="LAYOUT", default="",
+                        type=lambda s: s.replace(".", " "),
+                        help="split-grid read layout for the vector loads, e.g. "
+                             "2.2.2.1 (default: full-grid reads)")
     args = parser.parse_args()
 
     try:
         job, run_id = build_job(h8=not args.skip_h8, ama=not args.skip_ama,
-                                low=not args.skip_low)
+                                low=not args.skip_low, io_split=args.io_split)
     except ValueError as e:
         parser.error(str(e))
 

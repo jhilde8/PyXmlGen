@@ -213,7 +213,8 @@ def select_ladder(target=None):
 
 
 def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
-              loop_root=config.LOOP_ROOT, width=None, smeared_only=False):
+              loop_root=config.LOOP_ROOT, width=None, smeared_only=False,
+              io_split=""):
     tag_hits, tag_accuracies = parse_tag(tag)
     accuracies = accuracies or tag_accuracies
     if hits is None:
@@ -238,7 +239,7 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
             run_id += f".{ladder[-1][0]}"
     job = Job(run_id, schedule_file=config.schedule_file(run_id),
               graph_file=config.GRAPH)
-    pool = VectorPool(job)
+    pool = VectorPool(job, io_split)
 
     # leftBlock per left leg: the whole leg, i.e. no left blocking.
     rb = config.RIGHT_BLOCK
@@ -398,13 +399,18 @@ def main():
     parser.add_argument("--smeared-only", action="store_true",
                         help="emit only the smeared thin fields: no loops, no "
                              "unsmeared contractions, no EMF/CMF/mix")
+    parser.add_argument("--io-split", metavar="LAYOUT", default="",
+                        type=lambda s: s.replace(".", " "),
+                        help="split-grid read layout for every vector load, "
+                             "e.g. 2.2.2.1 (default: full-grid reads)")
     args = parser.parse_args()
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"
     job, run_id = build_job(args.tag, hits=args.hits,
                             load_loops=args.load_loops,
                             width=args.width,
-                            smeared_only=args.smeared_only)
+                            smeared_only=args.smeared_only,
+                            io_split=args.io_split)
     job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")
     print(f"wrote {run_id} to {out_dir}")
 

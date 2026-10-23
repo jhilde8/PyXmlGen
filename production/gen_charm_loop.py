@@ -3,6 +3,7 @@
     gen_charm_loop.py                 loop_c_h8 and loop_c_ama
     gen_charm_loop.py h4              a 4-hit chain and loop_c_ama
     gen_charm_loop.py --skip-ama      the chain only
+    gen_charm_loop.py --io-split 2.2.2.1   V read on split-grid partitions
 
 32 nodes, 256 ranks, high modes only, no sparsening.
 
@@ -98,7 +99,7 @@ def add_noise_and_w(job, tag, hit):
     return w
 
 
-def add_v(job, name, hit, n_hit):
+def add_v(job, name, hit, n_hit, io_split=""):
     """One hit's expanded high-mode V block. n_hit is the GLOBAL hit count of
     the estimator this block belongs to, not the number of extensions read
     here -- the 1/nHit factor belongs to the estimator, not to how the load is
@@ -107,7 +108,7 @@ def add_v(job, name, hit, n_hit):
         name, low_filestem="", n_low=0,
         high_stem=config.high_stem(FLAVOR),
         high_extensions=[config.high_extension(FLAVOR, hit, "v")],
-        high_size=config.N_HIGH, n_hit=n_hit))
+        high_size=config.N_HIGH, n_hit=n_hit, io_split=io_split))
     return name
 
 
@@ -119,13 +120,13 @@ def add_loop(job, name, v, w, input_loop=""):
     return name
 
 
-def add_ama(job, loop_root, hit=config.AMA_HIT):
+def add_ama(job, loop_root, hit=config.AMA_HIT, io_split=""):
     """The charm loop of the AMA correction hit, at nHit = 1 and unchained.
     Named for the correction, not the hit index (loop_c_ama), since nothing
     else in the campaign uses hit config.AMA_HIT. The hit index still picks
     the files."""
     w = add_noise_and_w(job, "ama", hit)
-    v = add_v(job, f"v_{FLAVOR}_ama", hit, 1)
+    v = add_v(job, f"v_{FLAVOR}_ama", hit, 1, io_split)
     loop = add_loop(job, f"loop_{FLAVOR}_ama", v, w)
     job.add(M.write_prop(f"save_{loop}", prop=loop,
                          file=f"{loop_root}/{loop}",
@@ -133,7 +134,7 @@ def add_ama(job, loop_root, hit=config.AMA_HIT):
 
 
 def build_job(n_hit=config.N_HIT, ama=True, run_id=None,
-              loop_root=config.LOOP_ROOT):
+              loop_root=config.LOOP_ROOT, io_split=""):
     # run_id and loop_root are parameters so a benchmark can emit this exact
     # structure at a lower hit count without landing on production's output.
     run_id = run_id or f"loop.charm.h{n_hit}" + (".ama" if ama else "")
@@ -141,12 +142,12 @@ def build_job(n_hit=config.N_HIT, ama=True, run_id=None,
               graph_file=config.GRAPH)
 
     if ama:
-        add_ama(job, loop_root)
+        add_ama(job, loop_root, io_split=io_split)
 
     link = ""
     for h in range(n_hit):
         w = add_noise_and_w(job, f"h{h}", h)
-        v = add_v(job, f"v_{FLAVOR}_h{h}", h, n_hit)
+        v = add_v(job, f"v_{FLAVOR}_h{h}", h, n_hit, io_split)
         link = add_loop(job, f"loop_{FLAVOR}_h{h}", v, w, link)
 
     # A PropagatorField is 144 complex per site: 77.3 GB whatever the hit count.
@@ -164,12 +165,17 @@ def main():
                         help="hN for the N-hit chain")
     parser.add_argument("--skip-ama", action="store_true",
                         help="leave out the AMA hit's loop")
+    parser.add_argument("--io-split", metavar="LAYOUT", default="",
+                        type=lambda s: s.replace(".", " "),
+                        help="split-grid read layout for the V loads, e.g. "
+                             "2.2.2.1 (default: full-grid reads)")
     args = parser.parse_args()
 
     match = re.fullmatch(r"h(\d+)", args.tag)
     if not match:
         parser.error(f"tag '{args.tag}' is not 'hN'")
-    job, run_id = build_job(n_hit=int(match.group(1)), ama=not args.skip_ama)
+    job, run_id = build_job(n_hit=int(match.group(1)), ama=not args.skip_ama,
+                            io_split=args.io_split)
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"
     job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")

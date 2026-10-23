@@ -9,14 +9,17 @@ from hadrons_xml import module
 
 
 def load_combined_a2a_vecs_v(name, low_filestem, n_low, high_stem, high_extensions,
-                            high_size, n_hit=0):
+                            high_size, n_hit=0, io_split=""):
     # n_hit: 1/nHit hit-average normalization on the high-mode blocks; the
     # factor lives on the V side by convention, so set it (to the number of
     # hits in the job's estimator) only for V loads. 0 or 1 = no rescaling
     # (W loads, single-hit data).
+    # io_split: split-grid read layout, space separated ("2 2 2 1"); empty =
+    # every file read on the full grid.
     return module(name, "MIO::LoadCombinedA2AVecsV",
                   lowFilestem=low_filestem, nLow=n_low, highStem=high_stem,
-                  highExtensions=high_extensions, highSize=high_size, nHit=n_hit)
+                  highExtensions=high_extensions, highSize=high_size, nHit=n_hit,
+                  ioSplit=io_split)
 
 
 def time_diluted_noise(name):
@@ -35,13 +38,14 @@ def load_time_diluted_noise(name, file_stems, n_noise_per_file_stem=1):
                   fileStems=file_stems, nNoisePerFileStem=n_noise_per_file_stem)
 
 
-def load_combined_a2a_vecs_w(name, low_filestem, n_low, noise):
+def load_combined_a2a_vecs_w(name, low_filestem, n_low, noise, io_split=""):
     # Dense/combined high-mode W representation: nLow low modes from files,
     # then 12 dense fermion fields per hit expanded from `noise`
     # (slot = nLow + hit*12 + sc, sc fastest). No nHit normalization: W stays
-    # raw noise.
+    # raw noise. io_split as for the V loader; only the low modes are read.
     return module(name, "MIO::LoadCombinedA2AVecsW",
-                  lowFilestem=low_filestem, nLow=n_low, noise=noise)
+                  lowFilestem=low_filestem, nLow=n_low, noise=noise,
+                  ioSplit=io_split)
 
 
 def a2a_high_mode_v(name, noise, action, solver, output, init_vec=0, n_vec=0):

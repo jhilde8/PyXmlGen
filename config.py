@@ -27,9 +27,9 @@ EXACT_ONLY_FLAVORS = {"c"}
 VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
 
 # Low modes: one set (light only), one file per vector, filestem
-# "<VW_BASE>/l_lo_v" / "l_lo_w" (module appends ".<traj>/elemN.bin").
+# "<LOW_VW>/lo_v" / "lo_w" (module appends ".<traj>/elemN.bin").
 N_LOW = 2000
-LOW_VW = "/lustre/orion/phy157/scratch/jhilde/64I/vw_lo"
+LOW_VW = f"{VW_BASE}/low"
 
 # High modes: per flavor, per hit, one file per vector. The tree is split by
 # solve accuracy: every sloppy hit under VW_SLOPPY as "<flavor><hit>_v" /
@@ -81,7 +81,7 @@ FIELD_LEGS = {
 
 def low_filestem(flavor, vw):
     assert FLAVOR_HAS_LOW[flavor]
-    return f"{LOW_VW}/{flavor}_lo_{vw}"
+    return f"{LOW_VW}/lo_{vw}"
 
 
 def high_stem(flavor, exact=False):

@@ -35,8 +35,11 @@ import modules as M
 
 
 class VectorPool:
-    def __init__(self, job):
+    # io_split: the split-grid read layout every loader in the job gets
+    # (modules.load_combined_a2a_vecs_v); empty = full-grid reads.
+    def __init__(self, job, io_split=""):
         self.job = job
+        self.io_split = io_split
         self._combined = {}  # (flavor, vw, hits-tuple) -> module name
         self._smeared = {}   # (flavor, hit, vw, width_tag) -> module name
         self._noise = {}     # (flavor, hits-tuple) -> noise module name
@@ -106,14 +109,15 @@ class VectorPool:
         if vw == "w":
             self.job.add(M.load_combined_a2a_vecs_w(
                 name, low_filestem,
-                config.N_LOW if has_low else 0, self.noise(flavor, hits, tag)))
+                config.N_LOW if has_low else 0, self.noise(flavor, hits, tag),
+                io_split=self.io_split))
         else:
             high_extensions = [config.high_extension(flavor, h, vw, exact)
                                for h in hits]
             self.job.add(M.load_combined_a2a_vecs_v(
                 name, low_filestem, config.N_LOW if has_low else 0,
                 config.high_stem(flavor, exact), high_extensions, config.N_HIGH,
-                n_hit=len(hits)))
+                n_hit=len(hits), io_split=self.io_split))
         self._combined[key] = name
         return name
 
