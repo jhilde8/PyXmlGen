@@ -126,8 +126,10 @@ At 256 nodes the ama job holds two accuracies of a one-hit set, 3 MiB a field:
 Device memory. Each contraction module frees its A2ASpatialSum buffers at the
 end of execute(), so the resident device footprint is one module's worth plus
 the Grid view cache set by --device-mem. With the whole left leg packed, the
-largest at 8 hits are the V_s-left fields (EMF, CMF, mix) at ~20 GiB per rank
-and the pion at ~20.5, so keep --device-mem near 16000. The ama job's largest
+largest at 8 hits are the V_s-left fields (EMF, CMF, mix) at ~20 GiB per rank,
+so keep --device-mem near 16000. The pion's right pack is phased by all 27
+momenta and ran out of device memory at RIGHT_BLOCK, so the pion alone takes a
+smaller right block, PION_RIGHT_BLOCK (PION_RIGHT_BLOCK_AMA in the ama job). The ama job's largest
 pack is W_l at 5.9 GiB, well inside the same setting.
 
 Output. Meson fields go to TMP_OUTPUT (node-local NVMe, substituted by the
@@ -197,6 +199,12 @@ LOOP_BLOCK_LIGHT = 200
 # Unused with nLow = 0 -- the high-mode phase contracts N_SC fields per hit --
 # but the module rejects zero.
 LOOP_BLOCK_STRANGE = config.N_SC
+
+# mf_pi rightBlock, every smearing state, a factor of the V_l mode count: the
+# 27-momentum phased right pack at RIGHT_BLOCK ran the device out of memory.
+# 128 is known to fit in both jobs; h8 14288 = 94 x 152, ama 3536 = 26 x 136.
+PION_RIGHT_BLOCK = 152
+PION_RIGHT_BLOCK_AMA = 136
 
 EMF_TYPES = "0 1 2 3"
 
@@ -268,6 +276,7 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
     n_lw = config.leg_size("l", "w", n_hit)
     n_sw = config.leg_size("s", "w", n_hit)
     n_sv = config.leg_size("s", "v", n_hit)
+    pion_rb = PION_RIGHT_BLOCK_AMA if tag == "ama" else PION_RIGHT_BLOCK
 
     def out(name):
         return f"{config.TMP_OUTPUT}/{name}"
@@ -361,16 +370,17 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
                                   time_slice_io=True))
 
     def thin_fields(acc, lw, lv, sw, sv, smear):
-        def mf(field, left, n_left, right, gammas, mom):
+        def mf(field, left, n_left, right, gammas, mom, right_block=rb):
             name = named(field, acc, smear)
-            job.add(M.a2a_meson_field(name, n_left, rb, left, right,
+            job.add(M.a2a_meson_field(name, n_left, right_block, left, right,
                                       out(name), gammas, mom,
                                       time_slice_io=True))
 
         mf("mf_sl", sw, n_sw, lv, config.GAMMA5,   config.KAON_MOM)
         mf("mf_ls", lw, n_lw, sv, config.GAMMA5,   config.KAON_MOM)
         mf("mf_ll", lw, n_lw, lv, config.IDENTITY, config.SIGMA_MOM)
-        mf("mf_pi", lw, n_lw, lv, config.GAMMA5,   config.PION_MOM)
+        mf("mf_pi", lw, n_lw, lv, config.GAMMA5, config.PION_MOM,
+           right_block=pion_rb)
 
     def heavy_fields(acc, lv, sv):
         for flavor in ("s", "l", "c"):
@@ -457,10 +467,11 @@ def main():
     parser.add_argument("--smeared-only", action="store_true",
                         help="emit only the smeared thin fields: no loops, no "
                              "unsmeared contractions, no EMF/CMF/mix")
-    parser.add_argument("--io-split", metavar="LAYOUT", default="",
+    parser.add_argument("--io-split", metavar="LAYOUT", default="2 2 2 2",
                         type=lambda s: s.replace(".", " "),
-                        help="split-grid read layout for every vector load, "
-                             "e.g. 2.2.2.1 (default: full-grid reads)")
+                        help="split-grid layout for every vector load and "
+                             "sparsened write (default: 2.2.2.2; '' for "
+                             "full-grid IO)")
     parser.add_argument("--charm-loop", action="store_true",
                         help="build and save the charm loop here instead of "
                              "loading gen_charm_loop.py's")
