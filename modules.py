@@ -79,9 +79,15 @@ def a2a_covariant_smear(name, a2a_vectors, gauge, alpha, N, orthog_axis=3,
                   orthog_axis=orthog_axis, output=output, multiFile=multi_file)
 
 
-def a2a_coarse_grid(name, fine, block_size, offsets, output):
+def a2a_coarse_grid(name, fine, block_size, offsets, output, mode_offset=0,
+                    mode_size=0, scale=1.0, io_split=""):
+    # mode_offset/mode_size: the block of `fine` to sparsen (size 0 = to the
+    # end). scale multiplies the coarse fields, e.g. n_hit to undo the V
+    # loader's 1/nHit; always emitted, since a missing node would read as 0.
     return module(name, "MUtilities::A2ACoarseGrid",
-                  fine=fine, blockSize=block_size, offsets=offsets, output=output)
+                  fine=fine, modeOffset=mode_offset, modeSize=mode_size,
+                  scale=scale, blockSize=block_size, offsets=offsets,
+                  output=output, ioSplit=io_split)
 
 
 def a2a_meson_field(name, left_block, right_block, left, right, output, gammas,

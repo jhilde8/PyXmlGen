@@ -7,7 +7,11 @@
 
 32 nodes, 256 ranks. Pure IO: every module is a load or an A2ACoarseGrid.
 
-Why its own job. A sparsened field is 1/64 of a fine one under the [4,4,4,1]
+Production now sparsens inside the meson-field job (gen_meson_fields.py
+--sparsen, with split-grid writes), into this same layout. This job remains
+for configurations whose meson fields were made without it.
+
+Why it was its own job. A sparsened field is 1/64 of a fine one under the [4,4,4,1]
 spatial blocking, ~100 MB, and a Lustre write needs roughly 4 MB per rank per
 file before per-file overhead stops dominating (measured with
 Hadrons/tests/Test_a2a_io_width.cpp). Inside a contraction job that is ~49 KB

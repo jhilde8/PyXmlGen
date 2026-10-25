@@ -5,6 +5,8 @@
     gen_meson_fields.py ama                      the correction hit, both ways
     gen_meson_fields.py h8 --hits 0 1 2 4 5 6 7 8   the eight hits that exist
     gen_meson_fields.py ama --load-loops         restart: read the loops back
+    gen_meson_fields.py h8 --charm-loop          build the charm loop here too
+    gen_meson_fields.py h8 --sparsen             write the sparsened V and W too
     gen_meson_fields.py h8 --smeared-only         both widths, no svlv
     gen_meson_fields.py h8 --width w2p03_n11      stop at the narrow rung
 
@@ -70,10 +72,14 @@ needs no new index convention -- only the smaller leg sizes.
 Loops. The light and strange loops are built here, where their vectors are
 already resident, and written to Lustre ahead of the contractions, so a failure
 later loses contractions only. --load-loops reads them back instead, for
-restarting a job that got past them. The charm loop is always loaded:
-production/gen_charm_loop.py builds it on a node count set by one hit of V
-rather than spending this job's nodes on a pure-IO step, and that job has to
-finish first.
+restarting a job that got past them. The charm loop is loaded by default, from
+production/gen_charm_loop.py, which builds it on a node count set by one hit
+of V; that job has to finish first. --charm-loop builds it here instead, first
+of all, and saves it like the others, under the same name gen_charm_loop.py
+writes (loop_c_h8, loop_c_ama). With split-grid reads the charm vectors cost
+minutes here, so the separate job saves about 1% of this job's node-hours
+against an extra job and a dependency. Charm is exact on every hit, so one V
+and one loop serve every accuracy.
 
 Smearing. config.SMEAR_LADDER is a ladder of increments, not a catalogue of
 widths: each rung smears the arrays the previous rung produced, and the job
@@ -104,7 +110,9 @@ all four legs fit at once, so nothing is tiled:
                                            ------
                                            42.1 GiB of 59.6 per rank
 
-Charm would push that to 60.3, which is the other reason its loop is external.
+Charm alongside them would push that to 60.3, so --charm-loop builds it before
+any other leg loads: the loop is the last consumer of V_c (18.0 GiB) and W_c, so
+both are freed before the light phase.
 At 256 nodes the ama job holds two accuracies of a one-hit set, 3 MiB a field:
 
     V_l sloppy + exact   7072 fields   20.7 GiB
@@ -132,16 +140,29 @@ mf_ls and mf_sl are only ever used together in the kaon two-point function, and
 mf_ls_ww goes with them. Their extra files cost node-local metadata, not
 Lustre, until the drain.
 
-Sparsening is not done here. A sparsened field is 1/64 of a fine one, ~100 MB,
-which at this job's node counts is ~49 KB per rank per file at 256 nodes and
-~25 KB at 512 -- far below the ~4 MB per rank a Lustre write needs, so per-file
-overhead dominates; the ama job did not finish its sparsening within an hour at
-256 nodes. It runs in its own 32-node job, production/gen_sparsen.py.
+Sparsening. --sparsen writes the light and strange V and W to SPARSE_ROOT in
+production/gen_sparsen.py's layout, one A2ACoarseGrid per block of a combined
+array: the light low modes, then each hit. Each array is sparsened as soon as it
+is loaded, so the writes are done before the loops, the contractions and the
+first smear (which moves its source). A V hit block is scaled by n_hit, undoing
+the loader's 1/nHit, so the sparse tree stays raw whichever job wrote it. The
+low block is written by hN jobs only: it is the same files in every job, and an
+ama job running beside an hN one on the same configuration would otherwise
+write it concurrently; the exact V's low block is skipped for the same reason.
+Charm is not sparsened. A sparsened field is ~100 MB, ~25 KB per rank at 512
+nodes, so the write needs --io-split: on 1-node partitions 316 fields took 1.4 s
+against 26.9 s from the full grid at 64 nodes. Each coarse block is 1/64 of its
+input and is freed as soon as it is written.
 
 Schedule (module order == schedule order):
 
     gauge, gauge_APE, the charm loop                a bad path fails early
+                                                    (--charm-loop: noise, W, V,
+                                                    loop, saved)
     light: noise, W, then V and loop per accuracy, each loop saved
+                                                    (--sparsen: each W and V
+                                                    sparsened right after it
+                                                    loads)
     strange: same
     mf_ls_ww                                        once, all passes use it
     per accuracy: mf_sl, mf_ls, mf_ll, mf_pi
@@ -214,7 +235,8 @@ def select_ladder(target=None):
 
 def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
               loop_root=config.LOOP_ROOT, width=None, smeared_only=False,
-              io_split=""):
+              io_split="", charm_loop=False, sparsen=False,
+              sparse_root=config.SPARSE_ROOT):
     tag_hits, tag_accuracies = parse_tag(tag)
     accuracies = accuracies or tag_accuracies
     if hits is None:
@@ -260,21 +282,57 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
 
     # The loops feed heavy_fields only, so a smeared-only job builds none of
     # them and does not load the charm one either. Charm is exact on every hit,
-    # so one loop serves every accuracy.
+    # so one loop serves every accuracy. A restart reads back whatever loop the
+    # first run saved, built here or not.
     loops = {}
     v = {}
     if not smeared_only:
         name = named("loop_c")
-        job.add(M.load_prop(name, f"{loop_root}/{name}",
-                            format=config.PROP_IO_FORMAT))
+        if charm_loop and not load_loops:
+            w_c = pool.combined("c", "w", hits, tag=tag)
+            v_c = pool.combined("c", "v", hits, tag=tag)
+            job.add(M.a2a_loop_new(name, left=v_c, right=w_c, n_low=0,
+                                   block=LOOP_BLOCK_STRANGE))
+            job.add(M.write_prop(f"save_{name}", prop=name,
+                                 file=f"{loop_root}/{name}",
+                                 format=config.PROP_IO_FORMAT))
+        else:
+            job.add(M.load_prop(name, f"{loop_root}/{name}",
+                                format=config.PROP_IO_FORMAT))
         for acc, _ in accuracies:
             loops[("c", acc)] = name
+
+    # --- sparsening, one A2ACoarseGrid per block --------------------------
+    # Block layout of a combined array: low modes (if any), then per hit
+    # N_HIGH expanded V or N_SC dense W. See "Sparsening" in the docstring.
+    def sparsen_array(array, flavor, vw, exact=False):
+        offset = 0
+        if config.FLAVOR_HAS_LOW[flavor]:
+            if tag != "ama" and not exact:
+                job.add(M.a2a_coarse_grid(
+                    f"sp_{array}_lo", array, config.COARSE_BLOCK_SIZE,
+                    config.COARSE_OFFSETS, f"{sparse_root}/{flavor}_lo_{vw}",
+                    mode_offset=0, mode_size=config.N_LOW, io_split=io_split))
+            offset = config.N_LOW
+        per_hit = config.N_HIGH if vw == "v" else config.N_SC
+        scale = float(n_hit) if vw == "v" else 1.0
+        for k, hit in enumerate(hits):
+            ext = config.high_extension(flavor, hit, vw, exact)
+            job.add(M.a2a_coarse_grid(
+                f"sp_{array}_h{hit}", array, config.COARSE_BLOCK_SIZE,
+                config.COARSE_OFFSETS, f"{sparse_root}/{ext}",
+                mode_offset=offset + k*per_hit, mode_size=per_hit,
+                scale=scale, io_split=io_split))
 
     # --- legs and loops, one flavor at a time ------------------------------
     def flavor_phase(flavor, n_low, block):
         w = pool.combined(flavor, "w", hits, tag=tag)
+        if sparsen:
+            sparsen_array(w, flavor, "w")
         for acc, exact in accuracies:
             leg = pool.combined(flavor, "v", hits, tag=tag, exact=exact)
+            if sparsen:
+                sparsen_array(leg, flavor, "v", exact)
             v[(flavor, acc)] = leg
             if smeared_only:
                 continue
@@ -403,6 +461,12 @@ def main():
                         type=lambda s: s.replace(".", " "),
                         help="split-grid read layout for every vector load, "
                              "e.g. 2.2.2.1 (default: full-grid reads)")
+    parser.add_argument("--charm-loop", action="store_true",
+                        help="build and save the charm loop here instead of "
+                             "loading gen_charm_loop.py's")
+    parser.add_argument("--sparsen", action="store_true",
+                        help="sparsen the light and strange V and W to "
+                             "SPARSE_ROOT as they load (use with --io-split)")
     args = parser.parse_args()
 
     out_dir = Path(config.OUTPUT_ROOT) / "production"
@@ -410,7 +474,9 @@ def main():
                             load_loops=args.load_loops,
                             width=args.width,
                             smeared_only=args.smeared_only,
-                            io_split=args.io_split)
+                            io_split=args.io_split,
+                            charm_loop=args.charm_loop,
+                            sparsen=args.sparsen)
     job.write(out_dir / f"par.{run_id}.xml", out_dir / f"schedule.{run_id}.txt")
     print(f"wrote {run_id} to {out_dir}")
 
