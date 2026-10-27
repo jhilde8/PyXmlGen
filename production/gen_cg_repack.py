@@ -18,7 +18,9 @@ the number of original sruns with anything left, which keeps the job's node
 count no larger than the original's; --sruns overrides it.
 
 Every srun is gen_cg.build_srun over its ranges, with the trajectory written
-in: a repack is particular to one configuration, so there is no template.
+in: a repack is particular to one configuration, so there is no template. The
+light write layout stays the IO_SPLIT placeholder (config.CG_IO_SPLIT), which
+cmd-run-CG-repack.sh substitutes from its --batched-solver-split.
 Written to <out> (default config.CG_XML_DIR, where the XMLs reference their
 schedule files):
 

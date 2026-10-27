@@ -30,10 +30,13 @@ CoarseDeflationBLAS200F, used directly as the exact solve's inner guess and
 through DeflationSrcCast as the outer guess of both accuracies. It runs the
 batched split-grid solver (A2AHighModeBatchedV, config.CG_BATCH_SIZE sources per
 call); the split layout is the srun's --batched-solver-split, not an XML
-parameter. Strange and charm run the single-RHS solver with no deflation.
+parameter. Each batch is then written on split-grid partitions of that same
+layout, through the config.CG_IO_SPLIT placeholder the submission script
+substitutes. Strange and charm run the single-RHS solver with no deflation.
 
 TRAJ_START / TRAJ_END stay as placeholders for the submission script to
-substitute, so one set of XMLs serves any number of configurations.
+substitute, so one set of XMLs serves any number of configurations; so does
+IO_SPLIT in the light XMLs (config.CG_IO_SPLIT).
 
 Each srun's run_id is CG<f>.NN (par.CGl.00.xml, schedule.CGl.00.txt). Also
 written per flavour: layout.CG<f>.txt, one line per srun with its node
@@ -123,7 +126,8 @@ def add_range(job, flavor, acc, seg, solver, action):
             raise ValueError(f"'{name}': {seg.count} vectors is not a multiple "
                              f"of the batch size {batch}")
         job.add(M.a2a_high_mode_batched_v(name, noise, action, solver, output,
-                                          seg.first, seg.count, batch))
+                                          seg.first, seg.count, batch,
+                                          io_split=config.CG_IO_SPLIT))
     else:
         job.add(M.a2a_high_mode_v(name, noise, action, solver, output,
                                   seg.first, seg.count))

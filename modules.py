@@ -250,14 +250,16 @@ def mixed_precision_rb_prec_cg_batched(name, inner_action, outer_action,
 
 
 def a2a_high_mode_batched_v(name, noise, action, solver, output, init_vec=0,
-                            n_vec=0, batch_size=0):
+                            n_vec=0, batch_size=0, io_split=""):
     # batch_size sources per solver call (0 or 1 = unbatched); must divide the
     # number of vectors this run computes. Each V is written at
     # <output>.<traj>/elem<i>.bin with i the noise vector index, so ranges of
     # one hit computed in different runs land in the same directory.
+    # io_split: split-grid layout for writing each batch ("" = full grid).
     return module(name, "MSolver::A2AHighModeBatchedV",
                   noise=noise, action=action, solver=solver, output=output,
-                  initVec=init_vec, nVec=n_vec, batchSize=batch_size)
+                  initVec=init_vec, nVec=n_vec, batchSize=batch_size,
+                  ioSplit=io_split)
 
 
 def ape_smear(name, gauge, alpha, N, orthog_axis=3):

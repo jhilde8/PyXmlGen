@@ -183,6 +183,14 @@ CG_SOLVERS = {
 CG_BATCH_SIZE = {"l": 16, "s": 0, "c": 0}
 CG_NODES_PER_SRUN = {"l": 64, "s": 4, "c": 4}
 
+# Placeholder for the batched flavours' write layout (A2AHighModeBatchedV
+# ioSplit). The submission script substitutes the same layout it passes to
+# --batched-solver-split, so the solver split is set in one place and each
+# partition writes one vector of the batch. Spaces, not dots, in the XML:
+#
+#   sed "s/IO_SPLIT/${SPLIT//./ }/g" par.in.xml > par.out.xml
+CG_IO_SPLIT = "IO_SPLIT"
+
 # Per-configuration layout: one (n_sloppy, n_exact) pair per srun. The sloppy
 # stream is the hits in CG_SLOPPY_HIT_ORDER, the exact stream those in
 # CG_EXACT_HIT_ORDER; each srun takes the next n vectors of each, cut into
@@ -235,6 +243,10 @@ CG_STARTUP = {"l": 950.0, "s": 0.0, "c": 0.0}
 # spin-colour field, 6442450944 bytes, plus the SciDAC record header.
 V_ELEM_BYTES = 6442453432
 
+# The same for a sparsened V or W file under COARSE_BLOCK_SIZE: 1/64 of the
+# sites, 100663296 bytes, plus the header.
+SPARSE_ELEM_BYTES = 100665784
+
 
 # --- lattice geometry -----------------------------------------------------
 # Needed by offline readers of raw propagator dumps (Frontier/diff_loop_prop.py),
@@ -251,6 +263,7 @@ PROP_IO_FORMAT = "IEEE64BIG"
 GAMMA5 = "Gamma5"
 IDENTITY = "Identity"
 G5_IDENT = "Identity Gamma5"
+MIX_GAMMAS = "Identity GammaT"
 EMF_GAMMA_FAMILIES = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU"    #no tensor structures needed in LEFT/WET BSM basis
 
 # --- momenta --------------------------------------------------------------
@@ -357,8 +370,10 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
 # Where every XML and schedule file lives on Frontier. Hadrons resolves
 # scheduleFile against the job's cwd, and the submission script cds to the
 # Lustre working directory, so a relative "./xml/schedule.*.txt" only works
-# because of that choice. Writing it absolute removes the dependency.
-XML_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF/xml"
+# because of that choice. Writing it absolute removes the dependency. MF_DIR
+# also holds check_mf.py's manifests and reports.
+MF_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF"
+XML_DIR = f"{MF_DIR}/xml"
 
 # Placeholder for the meson field output directory. Hadrons resolves a
 # relative <output> against the job's cwd, which is on Lustre, so a job meant
@@ -375,7 +390,7 @@ XML_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF/xml"
 # substituted value is the output directory rather than a file stem.
 TMP_OUTPUT = "TMP_OUTPUT"
 
-GRAPH = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF/graph.gv"
+GRAPH = f"{MF_DIR}/graph.gv"
 
 def schedule_file(run_id):
     """Absolute path Hadrons should read this job's schedule from at runtime."""
@@ -394,6 +409,81 @@ MF_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/mf"
 # layout, different tree, and the fields there are 1-hit -- so a par file
 # contracting them needs nHit = 1, not N_HIT. See [[project_ama_correction_hit]].
 MF_AMA_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/mf_ama"
+
+# Every drained field of each contraction job, as tag -> (base, {field:
+# {bytes per file: files}}), for check_mf.py. Tabulated from a good
+# configuration, in module order. A size is the payload rounded up to whole
+# HDF5 chunks plus headers, so it changes with any block size, hit count or
+# leg size: retabulate after changing one. A field can hold more than one
+# size because string metadata is padded to 8 bytes, so a gamma name longer
+# than 8 characters costs 8 bytes (twice in an EMF: gamma1 and gamma2).
+# h8 and ama tabulated 2026-10-27 from conf 1540.
+MF_EXPECTED = {
+    "h8": (MF_BASE, {
+        "mf_ls_ww_h8":           {3250040: 896},
+        "mf_sl_h8":              {22026240: 896},
+        "mf_ls_h8":              {453023840: 896},
+        "mf_ll_h8":              {528521600: 896},
+        "mf_pi_h8":              {486598768: 3456},
+        "emf_sloop_h8":          {2818758272: 1536, 2818758288: 1024},
+        "emf_lloop_h8":          {2818758272: 1536, 2818758288: 1024},
+        "emf_cloop_h8":          {2818758272: 1536, 2818758288: 1024},
+        "cmf_h8":                {2818758216: 512},
+        "cmf_ape_h8":            {2818758216: 512},
+        "mix_h8":                {2818758304: 256},
+        "mf_ls_ww_h8_w2p03_n11": {3250040: 896},
+        "mf_sl_h8_w2p03_n11":    {22026240: 896},
+        "mf_ls_h8_w2p03_n11":    {453023840: 896},
+        "mf_ll_h8_w2p03_n11":    {528521600: 896},
+        "mf_pi_h8_w2p03_n11":    {486598768: 3456},
+        "mf_ls_ww_h8_w4p1_n45":  {3250040: 896},
+        "mf_sl_h8_w4p1_n45":     {22026240: 896},
+        "mf_ls_h8_w4p1_n45":     {453023840: 896},
+        "mf_ll_h8_w4p1_n45":     {528521600: 896},
+        "mf_pi_h8_w4p1_n45":     {486598768: 3456},
+    }),
+    "ama": (MF_AMA_BASE, {
+        "mf_ls_ww_ama":               {403072: 896},
+        "mf_sl_ama_sloppy":           {694104: 896},
+        "mf_ls_ama_sloppy":           {50337760: 896},
+        "mf_ll_ama_sloppy":           {117459424: 896},
+        "mf_pi_ama_sloppy":           {115450744: 3456},
+        "mf_sl_ama_exact":            {694104: 896},
+        "mf_ls_ama_exact":            {50337760: 896},
+        "mf_ll_ama_exact":            {117459424: 896},
+        "mf_pi_ama_exact":            {115450744: 3456},
+        "emf_sloop_ama_sloppy":       {88099152: 1536, 88099168: 1024},
+        "emf_lloop_ama_sloppy":       {88099152: 1536, 88099168: 1024},
+        "emf_cloop_ama_sloppy":       {88099152: 1536, 88099168: 1024},
+        "cmf_ama_sloppy":             {88099096: 512},
+        "cmf_ape_ama_sloppy":         {88099096: 512},
+        "mix_ama_sloppy":             {88099184: 256},
+        "emf_sloop_ama_exact":        {88099152: 1536, 88099168: 1024},
+        "emf_lloop_ama_exact":        {88099152: 1536, 88099168: 1024},
+        "emf_cloop_ama_exact":        {88099152: 1536, 88099168: 1024},
+        "cmf_ama_exact":              {88099096: 512},
+        "cmf_ape_ama_exact":          {88099096: 512},
+        "mix_ama_exact":              {88099184: 256},
+        "mf_ls_ww_ama_w2p03_n11":     {403072: 896},
+        "mf_sl_ama_sloppy_w2p03_n11": {694104: 896},
+        "mf_ls_ama_sloppy_w2p03_n11": {50337760: 896},
+        "mf_ll_ama_sloppy_w2p03_n11": {117459424: 896},
+        "mf_pi_ama_sloppy_w2p03_n11": {115450744: 3456},
+        "mf_sl_ama_exact_w2p03_n11":  {694104: 896},
+        "mf_ls_ama_exact_w2p03_n11":  {50337760: 896},
+        "mf_ll_ama_exact_w2p03_n11":  {117459424: 896},
+        "mf_pi_ama_exact_w2p03_n11":  {115450744: 3456},
+        "mf_ls_ww_ama_w4p1_n45":      {403072: 896},
+        "mf_sl_ama_sloppy_w4p1_n45":  {694104: 896},
+        "mf_ls_ama_sloppy_w4p1_n45":  {50337760: 896},
+        "mf_ll_ama_sloppy_w4p1_n45":  {117459424: 896},
+        "mf_pi_ama_sloppy_w4p1_n45":  {115450744: 3456},
+        "mf_sl_ama_exact_w4p1_n45":   {694104: 896},
+        "mf_ls_ama_exact_w4p1_n45":   {50337760: 896},
+        "mf_ll_ama_exact_w4p1_n45":   {117459424: 896},
+        "mf_pi_ama_exact_w4p1_n45":   {115450744: 3456},
+    }),
+}
 
 # Correlators, and the contractor's own scratch. diskVectorDir is only written
 # to when a field spills its cache (DiskVectorBase::evict fires at

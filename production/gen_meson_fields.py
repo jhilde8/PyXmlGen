@@ -400,7 +400,7 @@ def build_job(tag, hits=None, accuracies=None, load_loops=False, run_id=None,
 
         name = named("mix", acc)
         job.add(M.a2a_meson_field(name, n_sv, rb, sv, lv, out(name),
-                                  config.IDENTITY, config.ZERO_MOM,
+                                  config.MIX_GAMMAS, config.ZERO_MOM,
                                   time_slice_io=True))
 
     if not smeared_only:
