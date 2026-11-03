@@ -57,9 +57,12 @@ def a2a_high_mode_v(name, noise, action, solver, output, init_vec=0, n_vec=0):
                   initVec=init_vec, nVec=n_vec)
 
 
-def a2a_low_modes_coarse(name, n_basis, eigen_pack, action, output):
+def a2a_low_modes_coarse(name, n_basis, eigen_pack, action, output, io_split=""):
+    # io_split: split-grid layout for writing each batch ("" = full grid); the
+    # batch is one mode per partition.
     return module(name, f"MUtilities::A2ALowModesCoarse{n_basis}",
-                  eigenPack=eigen_pack, action=action, output=output)
+                  eigenPack=eigen_pack, action=action, output=output,
+                  ioSplit=io_split)
 
 
 def a2a_low_modes(name, action, eigen_pack, output):

@@ -177,11 +177,11 @@ CG_SOLVERS = {
                           if_cgd=True),
 }
 
-# Sources per solver call. Light: one per split-grid partition (64 nodes,
-# --batched-solver-split 2.2.2.4 -> 16 partitions). Strange and charm are
-# unbatched (A2AHighModeV).
-CG_BATCH_SIZE = {"l": 16, "s": 0, "c": 0}
-CG_NODES_PER_SRUN = {"l": 64, "s": 4, "c": 4}
+# Sources per solver call. Light: one per split-grid partition (128 nodes,
+# --batched-solver-split 2.2.2.4 -> 32 partitions; 64 nodes and batch 16 until
+# the device OOM of 2026-10-31). Strange and charm are unbatched (A2AHighModeV).
+CG_BATCH_SIZE = {"l": 32, "s": 0, "c": 0}
+CG_NODES_PER_SRUN = {"l": 128, "s": 4, "c": 4}
 
 # Placeholder for the batched flavours' write layout (A2AHighModeBatchedV
 # ioSplit). The submission script substitutes the same layout it passes to
@@ -224,12 +224,14 @@ CG_EXACT_HIT_ORDER = {
 
 # Seconds per solver call, CG plus writes: one batch of CG_BATCH_SIZE sources
 # for a batched flavour, one source otherwise. Same measurements as CG_LAYOUT;
-# light writes are taken at the 0.37 s/vector its layout balances at. Only
-# the ratios matter to gen_cg_repack.py's balance; the absolute values and
-# CG_STARTUP only set the walltime it prints.
+# light writes are taken at the 0.37 s/vector its layout balances at. Light
+# compute per call is the 64-node batch-16 figure, unmeasured at 128 nodes and
+# batch 32 (same work per partition). Only the ratios matter to
+# gen_cg_repack.py's balance; the absolute values and CG_STARTUP only set the
+# walltime it prints.
 CG_COST = {
-    ("l", "sloppy"): 31.8 + 16 * 0.37,
-    ("l", "exact"):  71.5 + 16 * 0.37,
+    ("l", "sloppy"): 31.8 + CG_BATCH_SIZE["l"] * 0.37,
+    ("l", "exact"):  71.5 + CG_BATCH_SIZE["l"] * 0.37,
     ("s", "sloppy"): 29.95 + 3.0,
     ("s", "exact"):  71.98 + 3.0,
     ("c", "exact"):  17.14 + 3.0,

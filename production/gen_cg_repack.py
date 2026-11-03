@@ -8,7 +8,10 @@ For each configuration, vector_scan.scan checks the original layout on disk
 work again. A batched flavour (light, config.CG_BATCH_SIZE) redoes whole
 batches: every original range starts on a multiple of the batch size, so the
 batch holding index i starts at i - i % batch, and vectors of that batch
-already on disk are solved again with the rest.
+already on disk are solved again with the rest. It also redoes the batch
+before the first bad vector of each run, when that batch is in the same range:
+with no fsync, the last batch written before a node failure is suspect even
+at full size. 1054 vectors on disk of a range from 0 redoes 992 onwards.
 
 The work is cut into sruns of equal walltime, each solver call weighted by
 config.CG_COST, sloppy and exact free to share an srun. Calls are ordered by
@@ -66,12 +69,20 @@ def cost(flavor, call):
 
 def calls_left(flavor, scans):
     """The solver calls that put back every bad vector, exact before sloppy
-    within each hit."""
+    within each hit. A batched flavour also redoes the batch before each run
+    of bad vectors, inside the same range: writes are not fsync'ed, so the
+    last batch written before a node failure can be on disk at full size and
+    still be bad."""
     batch = batch_of(flavor)
     firsts = {}
     for r in scans:
-        for i in r.bad():
-            firsts.setdefault((r.hit, not r.exact), set()).add(i - i % batch)
+        bad = r.bad()
+        for i in bad:
+            starts = firsts.setdefault((r.hit, not r.exact), set())
+            starts.add(i - i % batch)
+            prev = i - i % batch - batch
+            if batch > 1 and (i - 1) not in bad and prev >= r.first:
+                starts.add(prev)
     return [Call(not sloppy, hit, first)
             for (hit, sloppy), starts in sorted(firsts.items())
             for first in sorted(starts)]
