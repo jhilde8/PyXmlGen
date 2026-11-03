@@ -217,6 +217,18 @@ def load_coarse_eigenpack_200f(name, filestem, multi_file, size_fine,
                   gaugeXform=gauge_xform)
 
 
+def load_coarse_eigenpack_split_200f(name, filestem, size_fine, size_coarse,
+                                     red_black, Ls, block_size, orthogonalise,
+                                     io_split, gauge_xform=""):
+    # Multi-file only, so no multiFile. io_split is the 4D partition layout of
+    # the coarse read, spaces like block_size.
+    return module(name, "MIO::LoadCoarseFermionEigenPackSplit200F",
+                  filestem=filestem, sizeFine=size_fine,
+                  sizeCoarse=size_coarse, redBlack=red_black, Ls=Ls,
+                  blockSize=block_size, orthogonalise=orthogonalise,
+                  gaugeXform=gauge_xform, ioSplit=io_split)
+
+
 def coarse_deflation_blas_200f(name, eigen_pack, size):
     return module(name, "MGuesser::CoarseDeflationBLAS200F",
                   eigenPack=eigen_pack, size=size)

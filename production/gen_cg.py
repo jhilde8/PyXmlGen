@@ -25,7 +25,8 @@ vw/sloppy/<f><h>_v and vw/exact/<f>8_exact, or vw/exact/c<h>_v for charm, the
 names every reader of the V tree uses. A range writes elem<i>.bin with i the noise vector index, so a hit
 cut across sruns still lands in one directory.
 
-Light (config.FLAVOR_HAS_LOW) is deflated: the coarse eigenpack and ONE
+Light (config.FLAVOR_HAS_LOW) is deflated: the coarse eigenpack (coarse
+vectors read on split-grid partitions of the same IO_SPLIT layout) and ONE
 CoarseDeflationBLAS200F, used directly as the exact solve's inner guess and
 through DeflationSrcCast as the outer guess of both accuracies. It runs the
 batched split-grid solver (A2AHighModeBatchedV, config.CG_BATCH_SIZE sources per
@@ -64,12 +65,13 @@ def srun_run_id(flavor, index):
     return f"CG{flavor}.{index:02d}"
 
 
-def add_deflation(job):
-    """Eigenpack and the shared guesser. Returns (inner, outer) guesser names."""
+def add_deflation(job, io_split):
+    """Eigenpack, its coarse vectors read on io_split partitions, and the
+    shared guesser. Returns (inner, outer) guesser names."""
     e = config.CG_EIGENPACK
-    job.add(M.load_coarse_eigenpack_200f(
-        "epack", e["filestem"], True, e["size_fine"], e["size_coarse"], True,
-        config.CG_LS, e["block_size"], False))
+    job.add(M.load_coarse_eigenpack_split_200f(
+        "epack", e["filestem"], e["size_fine"], e["size_coarse"], True,
+        config.CG_LS, e["block_size"], False, io_split))
     job.add(M.coarse_deflation_blas_200f("guesser", "epack",
                                          config.CG_DEFLATION_SIZE))
     job.add(M.deflation_src_cast("guesserD", "guesser"))
@@ -108,7 +110,7 @@ def add_solver(job, flavor, acc, outer, inner, guessers):
     return name
 
 
-def add_range(job, flavor, acc, seg, solver, action):
+def add_range(job, flavor, acc, seg, solver, action, io_split):
     exact = acc == "exact"
     batch = config.CG_BATCH_SIZE[flavor]
     noise = f"noise_{flavor}_h{seg.hit}"
@@ -127,22 +129,26 @@ def add_range(job, flavor, acc, seg, solver, action):
                              f"of the batch size {batch}")
         job.add(M.a2a_high_mode_batched_v(name, noise, action, solver, output,
                                           seg.first, seg.count, batch,
-                                          io_split=config.CG_IO_SPLIT))
+                                          io_split=io_split))
     else:
         job.add(M.a2a_high_mode_v(name, noise, action, solver, output,
                                   seg.first, seg.count))
 
 
-def build_srun(flavor, run_id, sloppy, exact, traj=None):
+def build_srun(flavor, run_id, sloppy, exact, traj=None,
+               io_split=config.CG_IO_SPLIT):
     """One srun's job over the given sloppy and exact segments. With traj None
-    the trajectory stays as the TRAJ_START / TRAJ_END placeholders."""
+    the trajectory stays as the TRAJ_START / TRAJ_END placeholders. io_split
+    is the light write and eigenpack-read layout, the IO_SPLIT placeholder by
+    default."""
     bounds = {} if traj is None else dict(traj_start=traj, traj_end=traj + 1)
     job = Job(run_id, schedule_file=config.cg_schedule_file(run_id,flavor),
               graph_file=config.CG_GRAPH, **bounds)
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))
     job.add(M.gauge_single_precision_cast("gaugef", "gauge"))
-    guessers = add_deflation(job) if config.FLAVOR_HAS_LOW[flavor] else None
+    guessers = (add_deflation(job, io_split) if config.FLAVOR_HAS_LOW[flavor]
+                else None)
     outer, inner = add_actions(job, flavor)
 
     # Exact first: in the light srun that holds both, the AMA hit's noise is
@@ -153,7 +159,7 @@ def build_srun(flavor, run_id, sloppy, exact, traj=None):
         if any(a == acc for a, _ in work):
             solvers[acc] = add_solver(job, flavor, acc, outer, inner, guessers)
     for acc, seg in work:
-        add_range(job, flavor, acc, seg, solvers[acc], outer)
+        add_range(job, flavor, acc, seg, solvers[acc], outer, io_split)
 
     return job, run_id
 

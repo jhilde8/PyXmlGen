@@ -21,9 +21,9 @@ the number of original sruns with anything left, which keeps the job's node
 count no larger than the original's; --sruns overrides it.
 
 Every srun is gen_cg.build_srun over its ranges, with the trajectory written
-in: a repack is particular to one configuration, so there is no template. The
-light write layout stays the IO_SPLIT placeholder (config.CG_IO_SPLIT), which
-cmd-run-CG-repack.sh substitutes from its --batched-solver-split.
+in: a repack is particular to one configuration, so there is no template. For
+the same reason the light write and eigenpack-read layout is written in as
+config.CG_SOLVER_SPLIT, which has to match the script's --batched-solver-split.
 Written to <out> (default config.CG_XML_DIR, where the XMLs reference their
 schedule files):
 
@@ -156,7 +156,8 @@ def main():
         for k, srun_calls in enumerate(sruns):
             run_id = f"CG{flavor}.repack.{k:02d}.{traj}"
             sloppy, exact = segments(flavor, srun_calls)
-            job, _ = build_srun(flavor, run_id, sloppy, exact, traj=traj)
+            job, _ = build_srun(flavor, run_id, sloppy, exact, traj=traj,
+                                io_split=config.CG_SOLVER_SPLIT[flavor])
             job.write(out_dir / f"par.{run_id}.xml",
                       out_dir / f"schedule.{run_id}.txt")
             seconds = (config.CG_STARTUP[flavor]

@@ -191,6 +191,10 @@ CG_NODES_PER_SRUN = {"l": 128, "s": 4, "c": 4}
 #   sed "s/IO_SPLIT/${SPLIT//./ }/g" par.in.xml > par.out.xml
 CG_IO_SPLIT = "IO_SPLIT"
 
+# The light --batched-solver-split, written in directly where there is no
+# template: gen_cg_repack.py's per-configuration XMLs.
+CG_SOLVER_SPLIT = {"l": "2 2 2 4", "s": "", "c": ""}
+
 # Per-configuration layout: one (n_sloppy, n_exact) pair per srun. The sloppy
 # stream is the hits in CG_SLOPPY_HIT_ORDER, the exact stream those in
 # CG_EXACT_HIT_ORDER; each srun takes the next n vectors of each, cut into
