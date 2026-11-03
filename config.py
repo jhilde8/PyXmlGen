@@ -153,7 +153,11 @@ CG_ACTIONS = {
 # Light deflation: the coarse eigenpack, and the BLAS guesser built from it.
 CG_EIGENPACK = dict(
     filestem="/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/converted/vec",
-    size_fine=200, size_coarse=2000, block_size="4 4 4 4 12")
+    size_fine=200, size_coarse=2000, block_size="4 4 4 4 12",
+    # Coarse vectors read on 8-rank partitions (MIO::LoadCoarseEigenPackSplit),
+    # independent of the solver split: on the full grid every rank opens
+    # every one of the 2000 files.
+    io_split="2 1 2 2")
 CG_DEFLATION_SIZE = 2000
 
 # Solver settings per (flavour, accuracy), from the same examples. Light runs
@@ -191,8 +195,8 @@ CG_NODES_PER_SRUN = {"l": 128, "s": 4, "c": 4}
 #   sed "s/IO_SPLIT/${SPLIT//./ }/g" par.in.xml > par.out.xml
 CG_IO_SPLIT = "IO_SPLIT"
 
-# The light --batched-solver-split, written in directly where there is no
-# template: gen_cg_repack.py's per-configuration XMLs.
+# The light --batched-solver-split, written in as the write layout where there
+# is no template: gen_cg_repack.py's per-configuration XMLs.
 CG_SOLVER_SPLIT = {"l": "2 2 2 4", "s": "", "c": ""}
 
 # Per-configuration layout: one (n_sloppy, n_exact) pair per srun. The sloppy

@@ -26,7 +26,7 @@ names every reader of the V tree uses. A range writes elem<i>.bin with i the noi
 cut across sruns still lands in one directory.
 
 Light (config.FLAVOR_HAS_LOW) is deflated: the coarse eigenpack (coarse
-vectors read on split-grid partitions of the same IO_SPLIT layout) and ONE
+vectors read on 8-rank partitions, config.CG_EIGENPACK io_split) and ONE
 CoarseDeflationBLAS200F, used directly as the exact solve's inner guess and
 through DeflationSrcCast as the outer guess of both accuracies. It runs the
 batched split-grid solver (A2AHighModeBatchedV, config.CG_BATCH_SIZE sources per
@@ -65,13 +65,13 @@ def srun_run_id(flavor, index):
     return f"CG{flavor}.{index:02d}"
 
 
-def add_deflation(job, io_split):
-    """Eigenpack, its coarse vectors read on io_split partitions, and the
+def add_deflation(job):
+    """Eigenpack, its coarse vectors read on split-grid partitions, and the
     shared guesser. Returns (inner, outer) guesser names."""
     e = config.CG_EIGENPACK
     job.add(M.load_coarse_eigenpack_split_200f(
         "epack", e["filestem"], e["size_fine"], e["size_coarse"], True,
-        config.CG_LS, e["block_size"], False, io_split))
+        config.CG_LS, e["block_size"], False, e["io_split"]))
     job.add(M.coarse_deflation_blas_200f("guesser", "epack",
                                          config.CG_DEFLATION_SIZE))
     job.add(M.deflation_src_cast("guesserD", "guesser"))
@@ -139,16 +139,14 @@ def build_srun(flavor, run_id, sloppy, exact, traj=None,
                io_split=config.CG_IO_SPLIT):
     """One srun's job over the given sloppy and exact segments. With traj None
     the trajectory stays as the TRAJ_START / TRAJ_END placeholders. io_split
-    is the light write and eigenpack-read layout, the IO_SPLIT placeholder by
-    default."""
+    is the light write layout, the IO_SPLIT placeholder by default."""
     bounds = {} if traj is None else dict(traj_start=traj, traj_end=traj + 1)
     job = Job(run_id, schedule_file=config.cg_schedule_file(run_id,flavor),
               graph_file=config.CG_GRAPH, **bounds)
 
     job.add(M.load_nersc("gauge", config.GAUGE_FILE))
     job.add(M.gauge_single_precision_cast("gaugef", "gauge"))
-    guessers = (add_deflation(job, io_split) if config.FLAVOR_HAS_LOW[flavor]
-                else None)
+    guessers = add_deflation(job) if config.FLAVOR_HAS_LOW[flavor] else None
     outer, inner = add_actions(job, flavor)
 
     # Exact first: in the light srun that holds both, the AMA hit's noise is

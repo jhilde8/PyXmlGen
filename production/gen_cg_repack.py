@@ -22,8 +22,8 @@ count no larger than the original's; --sruns overrides it.
 
 Every srun is gen_cg.build_srun over its ranges, with the trajectory written
 in: a repack is particular to one configuration, so there is no template. For
-the same reason the light write and eigenpack-read layout is written in as
-config.CG_SOLVER_SPLIT, which has to match the script's --batched-solver-split.
+the same reason the light write layout is written in as config.CG_SOLVER_SPLIT,
+which has to match the script's --batched-solver-split.
 Written to <out> (default config.CG_XML_DIR, where the XMLs reference their
 schedule files):
 
