@@ -6,8 +6,8 @@ file, <high_stem><extension>.<traj>/elem<i>.bin. A vector counts as done only
 at exactly config.V_ELEM_BYTES: a node failure during a write leaves a short
 file, and the scan reports it beside the missing ones.
 
-The expected set is always the original layout (srun_layout.cg_srun_ranges),
-never a repack's. A repack redoes only part of it, so scanning against the
+The expected set is always the original layout (srun_layout.cg_srun_ranges)
+of the configuration's config.HitSet, never a repack's. A repack redoes only part of it, so scanning against the
 original stays right however many repacks have run, and the scan of a finished
 configuration doubles as its output check.
 
@@ -50,12 +50,12 @@ def _sizes(path):
         return {}
 
 
-def scan(flavor, traj):
-    """Every range of the original layout of `flavor`, in srun order, checked
-    against the files of configuration `traj`."""
+def scan(flavor, traj, hits=config.HitSet()):
+    """Every range of the original layout of `flavor` and `hits`, in srun
+    order, checked against the files of configuration `traj`."""
     listings = {}
     out = []
-    for k, (sloppy, exact) in enumerate(cg_srun_ranges(flavor)):
+    for k, (sloppy, exact) in enumerate(cg_srun_ranges(flavor, hits)):
         for is_exact, segs in ((True, exact), (False, sloppy)):
             for seg in segs:
                 path = vector_dir(flavor, seg.hit, is_exact, traj)

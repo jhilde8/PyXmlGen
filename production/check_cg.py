@@ -2,9 +2,11 @@
 
     check_cg.py s --conf 1540 1550
     check_cg.py l s c --conf 1540
+    check_cg.py s h16 --conf 1200 1540
 
 Read-only. For every flavour and configuration, vector_scan.scan checks each
-range of config.CG_LAYOUT on disk: a vector is done only if elem<i>.bin exists
+range of the original layout on disk -- gen_cg.py's for the tag (default h8,
+config.CG_LAYOUT), with the configuration's AMA hit (config.hit_set): a vector is done only if elem<i>.bin exists
 at exactly config.V_ELEM_BYTES. The report has one line per hit and accuracy,
 with any missing or wrong-size indices and the original srun (CG<f>.NN) that
 owned them, so it serves both as the output check of a finished job and as
@@ -27,10 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from vector_scan import scan, index_runs
-from gen_cg import FLAVORS, srun_run_id
+from gen_cg import flavors_and_n_hit, srun_run_id
 
 
-def report(flavor, traj, scans):
+def report(flavor, traj, scans, hits=config.HitSet()):
     """Report lines for one flavour and configuration, and whether every
     vector is on disk at full size."""
     groups = {}
@@ -53,7 +55,7 @@ def report(flavor, traj, scans):
         line = f"{label:<10} {acc:<6} {total - missing - wrong:>5}/{total}"
         details = []
         for r in ranges:
-            owner = srun_run_id(flavor, r.srun)
+            owner = srun_run_id(flavor, r.srun, hits)
             if r.missing:
                 details.append(f"missing {index_runs(list(r.missing))} "
                                f"({owner})")
@@ -62,7 +64,7 @@ def report(flavor, traj, scans):
         lines.append(line + ("  " + "; ".join(details) if details else "  ok"))
 
     complete = n_missing == 0 and n_wrong == 0
-    head = (f"# CG{flavor} conf {traj}: {present}/{expected} vectors, "
+    head = (f"# CG{flavor} {hits.tag} conf {traj}: {present}/{expected} vectors, "
             f"{n_missing} missing, {n_wrong} wrong size -> "
             f"{'complete' if complete else 'INCOMPLETE'}")
     return [head] + lines, complete
@@ -71,23 +73,29 @@ def report(flavor, traj, scans):
 def main():
     parser = argparse.ArgumentParser(
         description="Check the CG output V files against the original layout.")
-    parser.add_argument("flavors", nargs="+", choices=FLAVORS)
+    parser.add_argument("targets", nargs="+", metavar="l|s|c|hN",
+                        help="flavours, then optionally a tag hN "
+                             f"(default h{config.N_HIT})")
     parser.add_argument("--conf", nargs="+", type=int, required=True)
     parser.add_argument("--out", default=config.CG_DIR,
-                        help="where check.CG<f>.<conf>.txt goes")
+                        help="where check.CG<f>[.hN].<conf>.txt goes")
     args = parser.parse_args()
+    flavors, n_hit = flavors_and_n_hit(parser, args.targets)
 
     out_dir = Path(args.out)
+    suffix = "" if n_hit == config.N_HIT else f".h{n_hit}"
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     all_complete = True
-    for flavor in args.flavors:
+    for flavor in flavors:
         for traj in args.conf:
-            lines, complete = report(flavor, traj, scan(flavor, traj))
+            hits = config.hit_set(n_hit, traj)
+            lines, complete = report(flavor, traj, scan(flavor, traj, hits),
+                                     hits)
             all_complete &= complete
             print("\n".join(lines) + "\n")
             text = [f"# checked {stamp}, expected size "
                     f"{config.V_ELEM_BYTES} bytes"] + lines
-            (out_dir / f"check.CG{flavor}.{traj}.txt").write_text(
+            (out_dir / f"check.CG{flavor}{suffix}.{traj}.txt").write_text(
                 "\n".join(text) + "\n")
     sys.exit(0 if all_complete else 1)
 

@@ -2,10 +2,13 @@
 
     gen_cg_repack.py s --conf 1540 1550
     gen_cg_repack.py l --conf 1540 --sruns 2
+    gen_cg_repack.py s h16 --conf 1540     an h8 configuration to 16 hits
 
-For each configuration, vector_scan.scan checks the original layout on disk
-(the same scan check_cg.py reports), and every missing or wrong-size vector is
-work again. A batched flavour (light, config.CG_BATCH_SIZE) redoes whole
+For each configuration, vector_scan.scan checks the original layout of the
+tag (default h8) on disk, with the configuration's AMA hit (config.hit_set):
+an h8 configuration in config.AMA8_CONFS keeps AMA hit 8, so at h16 its
+missing work is sloppy hits 9..16 and nothing exact. It is the same scan
+check_cg.py reports, and every missing or wrong-size vector is work again. A batched flavour (light, config.CG_BATCH_SIZE) redoes whole
 batches: every original range starts on a multiple of the batch size, so the
 batch holding index i starts at i - i % batch, and vectors of that batch
 already on disk are solved again with the rest. It also redoes the batch
@@ -38,33 +41,16 @@ Run it on Frontier, after the jobs writing these directories have ended.
 """
 import argparse
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 # The toolkit (config, srun_layout, vector_scan) lives one level up.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from srun_layout import Segment
+from srun_layout import Call, batch_of, segments, split
 from vector_scan import scan
-from gen_cg import FLAVORS, build_srun, describe
+from gen_cg import FLAVORS, build_srun, describe, n_hit_of, srun_hours
 from check_cg import report
-
-
-@dataclass(frozen=True)
-class Call:
-    """One solver call: vectors [first, first + batch) of one hit."""
-    exact: bool
-    hit: int
-    first: int
-
-
-def batch_of(flavor):
-    return max(config.CG_BATCH_SIZE[flavor], 1)
-
-
-def cost(flavor, call):
-    return config.CG_COST[(flavor, "exact" if call.exact else "sloppy")]
 
 
 def calls_left(flavor, scans):
@@ -88,35 +74,6 @@ def calls_left(flavor, scans):
             for first in sorted(starts)]
 
 
-def split(flavor, calls, n):
-    """Contiguous runs of `calls` of near-equal total cost: a call goes to the
-    srun whose share of the total contains its midpoint, so every srun is
-    within one call of total / n."""
-    total = sum(cost(flavor, c) for c in calls)
-    sruns = [[] for _ in range(n)]
-    done = 0.0
-    for c in calls:
-        w = cost(flavor, c)
-        sruns[min(int((done + w / 2) * n / total), n - 1)].append(c)
-        done += w
-    return [s for s in sruns if s]
-
-
-def segments(flavor, calls):
-    """An srun's calls as (sloppy, exact) segment lists, adjacent calls of
-    one hit and accuracy merged into one range."""
-    batch = batch_of(flavor)
-    out = {False: [], True: []}
-    for c in calls:
-        segs = out[c.exact]
-        last = segs[-1] if segs else None
-        if last and last.hit == c.hit and last.first + last.count == c.first:
-            segs[-1] = Segment(c.hit, last.first, last.count + batch)
-        else:
-            segs.append(Segment(c.hit, c.first, batch))
-    return out[False], out[True]
-
-
 def clear_previous(out_dir, flavor, traj):
     for pattern in (f"par.CG{flavor}.repack.*.{traj}.xml",
                     f"schedule.CG{flavor}.repack.*.{traj}.txt"):
@@ -128,19 +85,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate repack sruns for the CG work missing on disk.")
     parser.add_argument("flavor", choices=FLAVORS)
+    parser.add_argument("tag", nargs="?",
+                        help=f"hN, the target hit count (default h{config.N_HIT})")
     parser.add_argument("--conf", nargs="+", type=int, required=True)
     parser.add_argument("--sruns", type=int,
                         help="srun count (default: original sruns with work left)")
     parser.add_argument("--out", default=config.CG_XML_DIR)
     args = parser.parse_args()
+    n_hit = n_hit_of(parser, args.tag)
 
     flavor = args.flavor
     out_dir = Path(args.out)
     nodes = config.CG_NODES_PER_SRUN[flavor]
     total_sruns = 0
     for traj in args.conf:
-        scans = scan(flavor, traj)
-        lines, complete = report(flavor, traj, scans)
+        hits = config.hit_set(n_hit, traj)
+        scans = scan(flavor, traj, hits)
+        lines, complete = report(flavor, traj, scans, hits)
         print("\n".join(lines))
         clear_previous(out_dir, flavor, traj)
         if complete:
@@ -160,9 +121,7 @@ def main():
                                 io_split=config.CG_SOLVER_SPLIT[flavor])
             job.write(out_dir / f"par.{run_id}.xml",
                       out_dir / f"schedule.{run_id}.txt")
-            seconds = (config.CG_STARTUP[flavor]
-                       + sum(cost(flavor, c) for c in srun_calls))
-            hours.append(seconds / 3600)
+            hours.append(srun_hours(flavor, sloppy, exact))
             ranges = " ".join(d for d in (describe(exact, flavor, True),
                                           describe(sloppy, flavor)) if d)
             layout.append(f"{run_id} nodes={nodes} "

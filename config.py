@@ -3,6 +3,7 @@ Site-specific constants for the A2A vector layout (N_HIT hits per
 configuration) and physics parameters. Paths are checked against the Frontier
 tree when the generated XML is reviewed there before submission.
 """
+from dataclasses import dataclass
 from pathlib import Path
 
 N_HIT = 8
@@ -14,6 +15,46 @@ N_HIT = 8
 # from exact solves on 10% of its configurations. Both carry hit index N_HIT --
 # same noise stem, different vector tree (VW_SLOPPY / VW_EXACT).
 AMA_HIT = N_HIT
+
+
+@dataclass(frozen=True)
+class HitSet:
+    """One configuration's hits: n_hit production hits and the AMA hit, taken
+    from range(n_hit + 1). The index only seeds the noise, so which one is the
+    AMA hit is bookkeeping -- but it is fixed per configuration once solved:
+    the first h8 configurations have AMA = 8, and extending them to 16 hits
+    keeps it there (production 0..7, 9..16) rather than re-solving an exact
+    hit. A fresh configuration takes the default, AMA = n_hit."""
+    n_hit: int = N_HIT
+    ama: int = AMA_HIT
+
+    @classmethod
+    def of(cls, n_hit=N_HIT, ama=None):
+        ama = n_hit if ama is None else ama
+        if not 0 <= ama <= n_hit:
+            raise ValueError(f"AMA hit {ama} is outside 0..{n_hit}")
+        return cls(n_hit, ama)
+
+    @property
+    def production(self):
+        return [h for h in range(self.n_hit + 1) if h != self.ama]
+
+    @property
+    def tag(self):
+        """'h16', or 'h16.ama8' when the AMA hit is not the default."""
+        return f"h{self.n_hit}" + ("" if self.ama == self.n_hit
+                                   else f".ama{self.ama}")
+
+
+# Configurations solved as h8, whose AMA hit is 8 for good (2026-11-13): taken
+# to more hits they keep it, and the new production hits are 9, 10, ...
+# Temporary, for the 16-hit study: whichever hit count wins, this goes.
+AMA8_CONFS = frozenset(range(1400, 1701, 20))
+
+
+def hit_set(n_hit, traj):
+    """The HitSet of configuration `traj` at n_hit production hits."""
+    return HitSet.of(n_hit, 8 if traj in AMA8_CONFS else None)
 
 # Flavours solved exact on every hit, the AMA hit included, so they have one
 # vector set and no sloppy/exact distinction. Charm enters only through its
@@ -124,7 +165,7 @@ NOISE_FLAVOR = {"l": "ud", "s": "s", "c": "ud"}
 
 
 def noise_filestem(flavor, hit):
-    return f"{NOISE_BASE}_{NOISE_FLAVOR[flavor]}/hit00{hit}"
+    return f"{NOISE_BASE}_{NOISE_FLAVOR[flavor]}/hit{hit:03d}"
 
 
 # Loop propagators and sparsened vectors, beside VW_BASE on Lustre. Both are
@@ -208,10 +249,11 @@ CG_IO_SPLIT = "IO_SPLIT"
 # is no template: gen_cg_repack.py's per-configuration XMLs.
 CG_SOLVER_SPLIT = {"l": "2 2 2 4", "s": "", "c": ""}
 
-# Per-configuration layout: one (n_sloppy, n_exact) pair per srun. The sloppy
-# stream is the hits in CG_SLOPPY_HIT_ORDER, the exact stream those in
-# CG_EXACT_HIT_ORDER; each srun takes the next n vectors of each, cut into
-# per-hit ranges. Balanced on total time per source (CG + write) --
+# Per-configuration layout of the default HitSet (h8, AMA = 8): one
+# (n_sloppy, n_exact) pair per srun. The sloppy and exact streams are the hits
+# of cg_hit_order; each srun takes the next n vectors of each, cut into
+# per-hit ranges. Any other HitSet is cut automatically from CG_COST
+# (srun_layout.cg_srun_ranges). Balanced on total time per source (CG + write) --
 # plans/CG section 13. Timings per source on 4 nodes, write 3.0 s/vector
 # (2026-10-16): strange sloppy 29.95 s, exact 71.98 s; charm exact 17.14 s.
 CG_LAYOUT = {
@@ -226,37 +268,38 @@ CG_LAYOUT = {
     "l": [(2496, 1536), (5664, 0), (5664, 0)],
 }
 
-# Light puts the AMA sloppy hit first so that it lands in the same srun as its
-# exact solve: one noise load, freed after both.
-CG_SLOPPY_HIT_ORDER = {
-    "l": [AMA_HIT] + list(range(N_HIT)),
-    "s": list(range(N_HIT)) + [AMA_HIT],
-    "c": [],
-}
-CG_EXACT_HIT_ORDER = {
-    "l": [AMA_HIT],
-    "s": [AMA_HIT],
-    "c": list(range(N_HIT)) + [AMA_HIT],
-}
+def cg_hit_order(flavor, hits=HitSet()):
+    """The (sloppy, exact) hit streams of one configuration's CG. Light puts
+    the AMA hit first so that its sloppy range lands in the same srun as its
+    exact solve: one noise load, freed after both. Charm
+    (EXACT_ONLY_FLAVORS) solves every hit exact."""
+    if flavor in EXACT_ONLY_FLAVORS:
+        return [], hits.production + [hits.ama]
+    if flavor == "l":
+        return [hits.ama] + hits.production, [hits.ama]
+    return hits.production + [hits.ama], [hits.ama]
+
+
+# Target walltime of one srun when a layout is cut automatically
+# (srun_layout.cg_srun_ranges for any HitSet but the default).
+CG_SRUN_HOURS = 4.0
 
 # Seconds per solver call, CG plus writes: one batch of CG_BATCH_SIZE sources
-# for a batched flavour, one source otherwise. Same measurements as CG_LAYOUT;
-# light writes are taken at the 0.37 s/vector its layout balances at. Light
-# compute per call is the 64-node batch-16 figure, unmeasured at 128 nodes and
-# batch 32 (same work per partition). Only the ratios matter to
-# gen_cg_repack.py's balance; the absolute values and CG_STARTUP only set the
-# walltime it prints.
+# for a batched flavour, one source otherwise. Strange and charm are the
+# CG_LAYOUT measurements. Light is 128 nodes, batch 32 (2026-11-13): compute
+# 31.75 s sloppy, 75.1 s exact per call, the 64-node batch-16 figures again;
+# split-grid writes plus noise ~0.07 s per vector.
 CG_COST = {
-    ("l", "sloppy"): 31.8 + CG_BATCH_SIZE["l"] * 0.37,
-    ("l", "exact"):  71.5 + CG_BATCH_SIZE["l"] * 0.37,
+    ("l", "sloppy"): 31.75 + CG_BATCH_SIZE["l"] * 0.07,
+    ("l", "exact"):  75.1 + CG_BATCH_SIZE["l"] * 0.07,
     ("s", "sloppy"): 29.95 + 3.0,
     ("s", "exact"):  71.98 + 3.0,
     ("c", "exact"):  17.14 + 3.0,
 }
 
 # Seconds from srun start to the first solve. Light is the eigenpack load
-# (~950 s in the 2026-10-19 logs); strange and charm are not measured yet.
-CG_STARTUP = {"l": 950.0, "s": 0.0, "c": 0.0}
+# (~150 s with the split loader); strange and charm are not measured yet.
+CG_STARTUP = {"l": 150.0, "s": 0.0, "c": 0.0}
 
 # Size of one complete V file (elem<i>.bin): a double-precision 64^3 x 128
 # spin-colour field, 6442450944 bytes, plus the SciDAC record header.

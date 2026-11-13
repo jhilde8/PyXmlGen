@@ -1,18 +1,27 @@
 """High-mode V solves: one XML per srun, every srun of a flavour's configuration.
 
-    gen_cg.py l              light: 3 sruns of 64 nodes
+    gen_cg.py l              light: 3 sruns of 128 nodes
     gen_cg.py s c            strange and charm: 40 and 27 sruns of 4 nodes
-    gen_cg.py l s c          all three
+    gen_cg.py l s c h16      a fresh 16-hit configuration, AMA hit 16
 
-Work per configuration and flavour, N_HIGH noise vectors per hit: light and
-strange solve the 9 hits sloppy (production hits 0..N_HIT-1 and the AMA hit)
-and the AMA hit exact; charm (config.EXACT_ONLY_FLAVORS) solves all 9 exact.
-config.CG_LAYOUT gives every srun an (n_sloppy, n_exact) pair;
-srun_layout.cg_srun_ranges turns the sloppy stream (hits in config.CG_SLOPPY_HIT_ORDER) and the exact
-stream (config.CG_EXACT_HIT_ORDER) into per-hit ranges, and every range becomes
-one high-mode V module with initVec / nVec. The layout is balanced on total
-time per source (CG plus write); see plans/CG section 13, where the light cut
-also has a closed form for re-balancing from measured costs.
+The optional tag hN (default h<config.N_HIT>) gives config.HitSet.of(N):
+production hits 0..N-1 and the AMA hit N. Work
+per configuration and flavour, N_HIGH noise vectors per hit: light and strange
+solve every hit sloppy and the AMA hit exact; charm
+(config.EXACT_ONLY_FLAVORS) solves every hit exact. config.cg_hit_order gives
+the sloppy and exact hit streams.
+
+The default HitSet is cut by config.CG_LAYOUT, an (n_sloppy, n_exact) pair per
+srun balanced by hand on total time per source (CG plus write; plans/CG
+section 13). Any other HitSet is cut automatically: its solver calls, hit by
+hit, go to sruns of near-equal config.CG_COST, as few as fit in
+config.CG_SRUN_HOURS with the startup (srun_layout.cg_srun_ranges). Either
+way every per-hit range becomes one high-mode V module with initVec / nVec.
+
+An h8 configuration taken to 16 hits keeps its AMA hit 8
+(config.AMA8_CONFS), so it is not built here but repacked:
+`gen_cg_repack.py s h16 --conf <traj>` scans against HitSet.of(16, 8), finds
+hits 9..16 missing and solves only those.
 
 Noise is loaded, never generated: a hit split across sruns, and the AMA hit's
 sloppy and exact solves, must see the same sources, and sruns generating their
@@ -39,14 +48,20 @@ TRAJ_START / TRAJ_END stay as placeholders for the submission script to
 substitute, so one set of XMLs serves any number of configurations; so does
 IO_SPLIT in the light XMLs (config.CG_IO_SPLIT).
 
-Each srun's run_id is CG<f>.NN (par.CGl.00.xml, schedule.CGl.00.txt). Also
-written per flavour: layout.CG<f>.txt, one line per srun with its node
-count and ranges, to check the cut and to drive the submission script.
+Each srun's run_id is CG<f>.NN for the default HitSet (par.CGl.00.xml,
+schedule.CGl.00.txt) and CG<f>.<tag>.NN otherwise (par.CGs.h16.00.xml), so
+the template sets of different hit counts do not share a glob. Also written
+per flavour: layout.CG<f>[.<tag>].txt, one line per srun with its node count,
+estimated walltime and ranges, to check the cut and to drive the submission
+script.
 
 After a failure, check_cg.py reports what is missing on disk and
-gen_cg_repack.py rebuilds the remainder with build_srun.
+gen_cg_repack.py rebuilds the remainder with build_srun. Both take the same
+tag and rebuild the same layout from config, per configuration
+(config.hit_set).
 """
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -56,13 +71,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 import modules as M
 from hadrons_xml import Job
-from srun_layout import cg_srun_ranges
+from srun_layout import batch_of, cg_srun_ranges
 
 FLAVORS = ("l", "s", "c")
 
 
-def srun_run_id(flavor, index):
-    return f"CG{flavor}.{index:02d}"
+def srun_run_id(flavor, index, hits=config.HitSet()):
+    tag = "" if hits == config.HitSet() else f"{hits.tag}."
+    return f"CG{flavor}.{tag}{index:02d}"
+
+
+def n_hit_of(parser, tag):
+    """The hit count of a tag hN (None for the default)."""
+    tag = tag or f"h{config.N_HIT}"
+    match = re.fullmatch(r"h(\d+)", tag)
+    if not match:
+        parser.error(f"'{tag}' is neither a flavour nor a tag 'hN'")
+    return int(match.group(1))
+
+
+def flavors_and_n_hit(parser, targets):
+    """Positional 'l s c [hN]': the flavours, then at most one tag."""
+    flavors = [t for t in targets if t in FLAVORS]
+    tags = [t for t in targets if t not in FLAVORS]
+    if not flavors:
+        parser.error("no flavour given")
+    if len(tags) > 1:
+        parser.error(f"more than one tag: {' '.join(tags)}")
+    return flavors, n_hit_of(parser, tags[0] if tags else None)
+
+
+def srun_hours(flavor, sloppy, exact):
+    """Estimated walltime of one srun from config.CG_COST and CG_STARTUP."""
+    seconds = config.CG_STARTUP[flavor] + sum(
+        g.count // batch_of(flavor) * config.CG_COST[(flavor, acc)]
+        for acc, segs in (("sloppy", sloppy), ("exact", exact)) for g in segs)
+    return seconds / 3600
 
 
 def add_deflation(job):
@@ -162,9 +206,9 @@ def build_srun(flavor, run_id, sloppy, exact, traj=None,
     return job, run_id
 
 
-def build_flavor(flavor):
-    return [(build_srun(flavor, srun_run_id(flavor, k), s, e), s, e)
-            for k, (s, e) in enumerate(cg_srun_ranges(flavor))]
+def build_flavor(flavor, hits=config.HitSet()):
+    return [(build_srun(flavor, srun_run_id(flavor, k, hits), s, e), s, e)
+            for k, (s, e) in enumerate(cg_srun_ranges(flavor, hits))]
 
 
 def describe(segs, flavor, exact=False):
@@ -175,25 +219,35 @@ def describe(segs, flavor, exact=False):
 def main():
     parser = argparse.ArgumentParser(
         description="Generate the high-mode CG jobs, one XML per srun.")
-    parser.add_argument("flavors", nargs="+", choices=FLAVORS)
+    parser.add_argument("targets", nargs="+", metavar="l|s|c|hN",
+                        help="flavours, then optionally a tag hN "
+                             f"(default h{config.N_HIT})")
     args = parser.parse_args()
+    flavors, n_hit = flavors_and_n_hit(parser, args.targets)
+    hits = config.HitSet.of(n_hit)
 
     out_dir = Path(config.OUTPUT_ROOT) / "cg"
-    for flavor in args.flavors:
+    suffix = "" if hits == config.HitSet() else f".{hits.tag}"
+    for flavor in flavors:
         lines = []
-        sruns = build_flavor(flavor)
+        hours = []
+        sruns = build_flavor(flavor, hits)
         for (job, run_id), sloppy, exact in sruns:
             job.write(out_dir / f"par.{run_id}.xml",
                       out_dir / f"schedule.{run_id}.txt")
+            hours.append(srun_hours(flavor, sloppy, exact))
             ranges = " ".join(d for d in (describe(exact, flavor, True),
                                           describe(sloppy, flavor)) if d)
             lines.append(f"{run_id} nodes={config.CG_NODES_PER_SRUN[flavor]} "
                          f"sloppy={sum(g.count for g in sloppy)} "
-                         f"exact={sum(g.count for g in exact)} | {ranges}")
-        (out_dir / f"layout.CG{flavor}.txt").write_text("\n".join(lines) + "\n")
+                         f"exact={sum(g.count for g in exact)} "
+                         f"est={hours[-1]:.2f}h | {ranges}")
+        (out_dir / f"layout.CG{flavor}{suffix}.txt").write_text(
+            "\n".join(lines) + "\n")
         nodes = len(sruns) * config.CG_NODES_PER_SRUN[flavor]
-        print(f"wrote {len(sruns)} sruns for '{flavor}' ({nodes} nodes) "
-              f"to {out_dir}")
+        print(f"wrote {len(sruns)} sruns for '{flavor}' {hits.tag} "
+              f"(AMA {hits.ama}, {nodes} nodes, est. "
+              f"{min(hours):.2f}-{max(hours):.2f} h each) to {out_dir}")
 
 
 if __name__ == "__main__":
