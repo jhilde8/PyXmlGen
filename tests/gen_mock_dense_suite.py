@@ -10,54 +10,32 @@ the comparison also exercises both of our reader paths. Written under <run dir>:
     par.product.{ref,test}.xml    A2AMesonFieldProduct / A2APixPi
     par.flexible.{ref,test}.xml   FlexibleContractorDWC / FlexibleContractorDense
     par.bubble.{ref,test}.xml     BubbleContractorDWC / BubbleContractorDense
-    manifest.json                which reference output each of ours is checked against
+    manifest.json                 which reference output each of ours is checked against
 
-Products are written by both product tools (ref/ and test/); each contractor
-then reads the products of its own author, which the product diff has already
-shown to be identical. Entries are random rather than physical: this checks
-index bookkeeping (dense remap, offsets, orientation, precision, layout), not
-physics. Run everything with run_mock_dense_suite.sh.
+Our par files come from contractor_xml, the production toolkit, and Masaaki's
+from tests/dwc_xml. Products are written by both product tools (ref/ and
+test/); each contractor then reads the products of its own author, which the
+product diff has already shown to be identical. Entries are random rather than
+physical: this checks index bookkeeping (dense remap, offsets, orientation,
+precision, layout), not physics. Run everything with run_mock_dense_suite.sh.
 """
 import json
 import os
 import sys
+from pathlib import Path
 
 import h5py
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from contractor_xml import BubbleJob, FlexibleJob, PixPiJob, axis
+from dwc_xml import BubbleDWCJob, FlexibleDWCJob, ProductJob
+
 NT, NSC = 8, 12
+TRAJ = (0, 1)
 out = os.path.abspath(sys.argv[1])
 rng = np.random.default_rng(20261110)
-
-
-def dense(nlow, nhit):
-    return nlow + nhit * NSC
-
-
-def expanded(nlow, nhit):
-    return nlow + nhit * NT * NSC
-
-
-def to_compound(a, real):
-    c = np.empty(a.shape, dtype=np.dtype([("re", real), ("im", real)]))
-    c["re"], c["im"] = a.real, a.imag
-    return c
-
-
-def write_single(path, group, a, real):
-    with h5py.File(path, "w") as f:
-        f.create_group(group).create_dataset("a2aMatrix", data=to_compound(a, real))
-
-
-def write_ts(stem, group, a, real):
-    for t in range(a.shape[0]):
-        with h5py.File(f"{stem}.t{t:04d}.h5", "w") as f:
-            f.create_group(group).create_dataset("a2aMatrix", data=to_compound(a[t:t+1], real))
-
-
-def b(x):
-    return str(x).lower()
-
 
 # name: (rowDense, colDense, nLow, nHit, real). Both axes share nLow and nHit.
 FIELDS = {
@@ -119,164 +97,125 @@ BUBBLES = {
 IDENTITIES = [("b_prod", "b_pair"), ("b_prodL", "b_pairL")]
 
 
+def field_axes(name):
+    rd, cd, nlow, _, _ = FIELDS[name]
+    return axis(rd, nlow), axis(cd, nlow)
+
+
 def field_dims(name):
     rd, cd, nlow, nhit, _ = FIELDS[name]
-    return (dense if rd else expanded)(nlow, nhit), (dense if cd else expanded)(nlow, nhit)
+    return tuple(nlow + nhit * (NSC if d else NT * NSC) for d in (rd, cd))
 
 
-def axes(name):
-    """(row, col) as (dense, nLow, timeOffset) for a field or a product."""
-    if name in PRODUCTS:
-        left, right, dl, dr = PRODUCTS[name]
-        lr, _, ln, _, _ = FIELDS[left]
-        _, rc, rn, _, _ = FIELDS[right]
-        return (lr, ln, dl % NT), (rc, rn, dr % NT)
-    rd, cd, nlow, _, _ = FIELDS[name]
-    return (rd, nlow, 0), (cd, nlow, 0)
+def to_compound(a, real):
+    c = np.empty(a.shape, dtype=np.dtype([("re", real), ("im", real)]))
+    c["re"], c["im"] = a.real, a.imag
+    return c
 
 
-def test_name(name):
-    if name in PRODUCTS:
-        return name
+def write_fields():
+    for d in ("in_single", "in_ts", "ref", "test"):
+        os.makedirs(os.path.join(out, d), exist_ok=True)
+    for name, (*_, real) in FIELDS.items():
+        ni, nj = field_dims(name)
+        a = rng.standard_normal((NT, ni, nj)) + 1j * rng.standard_normal((NT, ni, nj))
+        with h5py.File(f"{out}/in_single/{name}.h5", "w") as f:
+            f.create_group(name).create_dataset("a2aMatrix", data=to_compound(a, real))
+        for t in range(NT):
+            with h5py.File(f"{out}/in_ts/{name}.t{t:04d}.h5", "w") as f:
+                f.create_group(name).create_dataset("a2aMatrix", data=to_compound(a[t:t+1], real))
+
+
+def base_name(name):
+    """Our matrix name for a base field: which of its two copies it reads."""
     return name + ("_sf" if name in SINGLE_FILE_INPUTS else "_ts")
 
 
-def test_matrix(name, ts, path):
-    def axis(a):
-        return f"<dense>{b(a[0])}</dense><nLow>{a[1]}</nLow><timeOffset>{a[2]}</timeOffset>"
-    row, col = axes(name)
-    tag = name if name in PRODUCTS else name + ("_ts" if ts else "_sf")
-    return (f"<elem><name>{tag}</name><file>{path}</file><dataset>{name}</dataset>"
-            f"<timeSliceIO>{b(ts)}</timeSliceIO><row>{axis(row)}</row><col>{axis(col)}</col></elem>")
+def add_base(job, name, single_file):
+    row, col = field_axes(name)
+    if single_file:
+        job.add_matrix(f"{name}_sf", f"{out}/in_single/{name}.h5", name, row, col,
+                       time_slice_io=False)
+    else:
+        job.add_matrix(f"{name}_ts", f"{out}/in_ts/{name}.h5", name, row, col)
 
 
-def ref_matrix(name, path):
-    row, col = axes(name)
-    return (f"<elem><file>{path}</file><dataset>{name}</dataset><cacheSize>{NT}</cacheSize>"
-            f"<name>{name}</name><initDenseRow>{row[1] if row[0] else -1}</initDenseRow>"
-            f"<initDenseCol>{col[1] if col[0] else -1}</initDenseCol>"
-            f"<timeOffsetRow>{row[2]}</timeOffsetRow><timeOffsetCol>{col[2]}</timeOffsetCol></elem>")
+def products_test():
+    """A2APixPi on both copies of every field; returns each product's
+    a2aMatrix entry for the contractor jobs."""
+    job = PixPiJob(NT, *TRAJ)
+    for name in FIELDS:
+        add_base(job, name, single_file=False)
+        add_base(job, name, single_file=True)
+    entries = {}
+    for name, (left, right, dl, dr) in PRODUCTS.items():
+        entries[name] = job.add_product(base_name(left), f"{right}_ts", dl, dr,
+                                        f"{out}/test/{name}.h5", name)
+    job.write(f"{out}/par.product.test.xml")
+    return entries
 
 
-def ref_stem(terms):
-    return "_".join(f"{t}_{'x' if s else 'y'}{o}" for t, s, o in terms)
+def products_ref():
+    job = ProductJob(*TRAJ)
+    for name in FIELDS:
+        job.add_matrix(name, f"{out}/in_single/{name}.h5", name, *field_axes(name))
+    for name, (left, right, dl, dr) in PRODUCTS.items():
+        job.add_product(left, right, dl, dr, f"{out}/ref/{name}.h5", name)
+    job.write(f"{out}/par.product.ref.xml")
 
 
-def grid(body):
-    return f'<?xml version="1.0"?><grid>{body}</grid>'
-
-
-def traj():
-    return "<trajCounter><start>0</start><end>1</end><step>1</step></trajCounter>"
-
-
-def product_xml_ref():
-    m = "".join(f"<elem><name>{n}</name><file>{out}/in_single/{n}.h5</file><group>{n}</group></elem>"
-                for n in FIELDS)
-    p = ""
-    for n, (l, r, dl, dr) in PRODUCTS.items():
-        (_, _, _), lcol = axes(l)
-        rrow, _ = axes(r)
-        p += (f"<elem><mfL>{l}</mfL><mfR>{r}</mfR><deltaL>{dl}</deltaL><deltaR>{dr}</deltaR>"
-              f"<ifDenseL>{b(lcol[0])}</ifDenseL><ifDenseR>{b(rrow[0])}</ifDenseR>"
-              f"<initDense>{FIELDS[l][2]}</initDense><output>{out}/ref/{n}.h5</output>"
-              f"<outputGroup>{n}</outputGroup></elem>")
-    return grid(f"<global>{traj()}</global><a2aMatrix>{m}</a2aMatrix><product>{p}</product>")
-
-
-def product_xml_test():
-    m = "".join(test_matrix(n, ts, f"{out}/{'in_ts' if ts else 'in_single'}/{n}.h5")
-                for n in FIELDS for ts in (True, False))
-    p = "".join(f"<elem><left>{test_name(l)}</left><right>{r}_ts</right><deltaL>{dl}</deltaL>"
-                f"<deltaR>{dr}</deltaR><output>{out}/test/{n}.h5</output><dataset>{n}</dataset></elem>"
-                for n, (l, r, dl, dr) in PRODUCTS.items())
-    return grid(f"<global>{traj()}<nt>{NT}</nt></global><a2aMatrix>{m}</a2aMatrix>"
-                f"<product>{p}</product>")
-
-
-def used_names():
-    return sorted({t for terms, *_ in CONTRACTIONS.values() for t, _, _ in terms})
-
-
-def flexible_xml_ref():
-    m = "".join(ref_matrix(n, f"{out}/{'ref' if n in PRODUCTS else 'in_single'}/{n}.h5")
-                for n in used_names())
-    p = ""
-    for terms, tr, lo, hi, avg in CONTRACTIONS.values():
-        t = "".join(f"<elem><term>{n}</term><tdps>{b(s)}</tdps><time>{o}</time></elem>"
-                    for n, s, o in terms)
-        p += (f"<elem><terms>{t}</terms><translations>{tr}</translations><min_t>{lo}</min_t>"
-              f"<max_t>{hi}</max_t><translationAverage>{b(avg)}</translationAverage></elem>")
-    return grid(f"<global>{traj()}<nt>{NT}</nt><diskVectorDir>{out}/dv_ref</diskVectorDir>"
-                f"<output>{out}/corr_ref</output></global><a2aMatrix>{m}</a2aMatrix>"
-                f"<product>{p}</product>")
-
-
-def flexible_xml_test():
-    m = ""
-    for n in used_names():
-        if n in PRODUCTS:
-            m += test_matrix(n, True, f"{out}/test/{n}.h5")
+def declare_test(job, names, entries):
+    for name in names:
+        if name in PRODUCTS:
+            job.add_matrix(name, **entries[name])
         else:
-            ts = n not in SINGLE_FILE_INPUTS
-            m += test_matrix(n, ts, f"{out}/{'in_ts' if ts else 'in_single'}/{n}.h5")
-    c = ""
+            add_base(job, name, single_file=name in SINGLE_FILE_INPUTS)
+
+
+def declare_ref(job, names, entries):
+    for name in names:
+        if name in PRODUCTS:
+            e = entries[name]
+            job.add_matrix(name, f"{out}/ref/{name}.h5", name, e["row"], e["col"])
+        else:
+            job.add_matrix(name, f"{out}/in_single/{name}.h5", name, *field_axes(name))
+
+
+def test_term(name):
+    return name if name in PRODUCTS else base_name(name)
+
+
+def flexible(entries):
+    used = sorted({t for terms, *_ in CONTRACTIONS.values() for t, _, _ in terms})
+    test = FlexibleJob(NT, f"{out}/corr_test", *TRAJ)
+    ref = FlexibleDWCJob(NT, f"{out}/dv_ref", f"{out}/corr_ref", *TRAJ)
+    declare_test(test, used, entries)
+    declare_ref(ref, used, entries)
+    stems = {}
     for name, (terms, tr, lo, hi, avg) in CONTRACTIONS.items():
-        t = "".join(f"<elem><name>{test_name(n)}</name><role>{'sink' if s else 'source'}</role>"
-                    f"<offset>{o}</offset></elem>" for n, s, o in terms)
-        c += (f"<elem><name>{name}</name><terms>{t}</terms><translations>{tr}</translations>"
-              f"<min_t>{lo}</min_t><max_t>{hi}</max_t>"
-              f"<translationAverage>{b(avg)}</translationAverage></elem>")
-    return grid(f"<global>{traj()}<nt>{NT}</nt><output>{out}/corr_test</output></global>"
-                f"<a2aMatrix>{m}</a2aMatrix><contraction>{c}</contraction>")
+        test.add_contraction(name, [(test_term(t), "sink" if s else "source", o)
+                                    for t, s, o in terms], tr, lo, hi, avg)
+        stems[name] = ref.add_contraction(terms, tr, lo, hi, avg)
+    test.write(f"{out}/par.flexible.test.xml")
+    ref.write(f"{out}/par.flexible.ref.xml")
+    return stems
 
 
-def bubble_ref_terms(terms):
-    """Masaaki's (terms, times) for one of our bubbles, term 0 moved to dt."""
-    o0 = terms[0][1]
-    return [n for n, _ in terms], [(o - o0) % NT for _, o in terms[1:]]
-
-
-def bubble_stem(terms):
-    names, times = bubble_ref_terms(terms)
-    return "".join(f"{n}_{t}_" for n, t in zip(names, times)) + names[-1]
-
-
-def bubble_names():
-    return sorted({n for terms in BUBBLES.values() for n, _ in terms})
-
-
-def bubble_xml_ref():
-    m = "".join(ref_matrix(n, f"{out}/{'ref' if n in PRODUCTS else 'in_single'}/{n}.h5")
-                for n in bubble_names())
-    p, seen = "", set()
-    for terms in BUBBLES.values():
-        if bubble_stem(terms) in seen:
-            continue
-        seen.add(bubble_stem(terms))
-        names, times = bubble_ref_terms(terms)
-        t = "".join(f"<elem>{x}</elem>" for x in times)
-        p += f"<elem><terms>{' '.join(names)}</terms><times>{t}</times></elem>"
-    return grid(f"<global>{traj()}<nt>{NT}</nt><diskVectorDir>{out}/dv_bub_ref</diskVectorDir>"
-                f"<output>{out}/bub_ref</output></global><a2aMatrix>{m}</a2aMatrix>"
-                f"<product>{p}</product>")
-
-
-def bubble_xml_test():
-    m = ""
-    for n in bubble_names():
-        if n in PRODUCTS:
-            m += test_matrix(n, True, f"{out}/test/{n}.h5")
-        else:
-            ts = n not in SINGLE_FILE_INPUTS
-            m += test_matrix(n, ts, f"{out}/{'in_ts' if ts else 'in_single'}/{n}.h5")
-    c = ""
+def bubbles(entries):
+    used = sorted({t for terms in BUBBLES.values() for t, _ in terms})
+    test = BubbleJob(NT, f"{out}/bub_test", *TRAJ)
+    ref = BubbleDWCJob(NT, f"{out}/dv_bub_ref", f"{out}/bub_ref", *TRAJ)
+    declare_test(test, used, entries)
+    declare_ref(ref, used, entries)
+    stems = {}
     for name, terms in BUBBLES.items():
-        t = "".join(f"<elem><name>{test_name(n)}</name><offset>{o}</offset></elem>"
-                    for n, o in terms)
-        c += f"<elem><name>{name}</name><terms>{t}</terms></elem>"
-    return grid(f"<global>{traj()}<nt>{NT}</nt><output>{out}/bub_test</output></global>"
-                f"<a2aMatrix>{m}</a2aMatrix><bubble>{c}</bubble>")
+        test.add_bubble(name, [(test_term(t), o) for t, o in terms])
+        o0 = terms[0][1]
+        stems[name] = ref.add_bubble([t for t, _ in terms],
+                                     [(o - o0) % NT for _, o in terms[1:]])
+    test.write(f"{out}/par.bubble.test.xml")
+    ref.write(f"{out}/par.bubble.ref.xml")
+    return stems
 
 
 def expand_translations(tr):
@@ -287,33 +226,21 @@ def expand_translations(tr):
     return ts
 
 
-for d in ("in_single", "in_ts", "ref", "test"):
-    os.makedirs(os.path.join(out, d), exist_ok=True)
-
-for name, (*_, real) in FIELDS.items():
-    ni, nj = field_dims(name)
-    a = rng.standard_normal((NT, ni, nj)) + 1j * rng.standard_normal((NT, ni, nj))
-    write_single(os.path.join(out, "in_single", name + ".h5"), name, a, real)
-    write_ts(os.path.join(out, "in_ts", name), name, a, real)
-
-for fn, text in (("par.product.ref.xml", product_xml_ref()),
-                 ("par.product.test.xml", product_xml_test()),
-                 ("par.flexible.ref.xml", flexible_xml_ref()),
-                 ("par.flexible.test.xml", flexible_xml_test()),
-                 ("par.bubble.ref.xml", bubble_xml_ref()),
-                 ("par.bubble.test.xml", bubble_xml_test())):
-    with open(os.path.join(out, fn), "w") as f:
-        f.write(text)
+write_fields()
+products_ref()
+entries = products_test()
+flex_stems = flexible(entries)
+bub_stems = bubbles(entries)
 
 manifest = {
     "nt": NT,
     "contractions": [
-        {"test": name, "ref": ref_stem(terms), "average": avg,
+        {"test": name, "ref": flex_stems[name], "average": avg,
          "translations": expand_translations(tr), "min_t": lo, "max_t": hi}
         for name, (terms, tr, lo, hi, avg) in CONTRACTIONS.items()
     ],
     "bubbles": [
-        {"test": name, "ref": bubble_stem(terms), "roll": terms[0][1]}
+        {"test": name, "ref": bub_stems[name], "roll": terms[0][1]}
         for name, terms in BUBBLES.items()
     ],
     "identities": IDENTITIES,

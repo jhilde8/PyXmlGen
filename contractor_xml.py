@@ -3,222 +3,282 @@ XML construction for the standalone contractor utilities.
 
 This is a different document from hadrons_xml.Job. A Hadrons job is
 <grid><parameters/><modules/></grid> and is executed by the scheduler; a
-contractor par file is <grid><global/><a2aMatrix/><product/></grid> and is
-read straight into three Serializable structs by main(). Nothing is shared
-but the option-serialisation helpers, so the two live side by side rather
-than one wrapping the other.
+utility par file is <grid><global/>...</grid> and is read straight into
+Serializable structs by main(). Nothing is shared but the option-serialisation
+helpers, so the two live side by side rather than one wrapping the other.
 
-One builder covers both binaries. Passing n_hit to ContractorJob and n_low to
-add_matrix emits the ContractorDense schema (Hadrons/utilities/
-ContractorDense.cpp); leaving both out emits the stock HadronsContractor one
-(Contractor.cpp). Mixing them is rejected on write, since a par file carrying
-half the dense fields parses on neither binary.
+The contraction utilities all sit on Hadrons/utilities/A2ADenseContract.hpp:
+
+    PixPiJob       A2APixPi                products C[t] = L[t+dL] R[t+dR]
+    FlexibleJob    FlexibleContractorDense  N-term source/sink traces
+    BubbleJob      BubbleContractorDense    1- and 2-term bubbles, every t
+
+They share one <a2aMatrix> entry (MatrixPar): a name, the file and HDF5 group,
+timeSliceIO, and a row and a col axis, each {dense, nLow, timeOffset}. Base
+fields take their axes from config.field_axes(kind); a product's axes are
+derived by PixPiJob.add_product, which returns the entry a contractor job
+declares, so no offset is ever typed twice.
 
 Element order follows the GRID_SERIALIZABLE_CLASS_MEMBERS declaration order in
-the .cpp. Grid's XmlReader looks members up by name so order is not load
+the .cpp/.hpp. Grid's XmlReader looks members up by name, so order is not load
 bearing, but a par file that reads top to bottom like the struct is easier to
 check against it.
+
+Every job checks on write() what the utility would refuse at run time and can
+be known without the files: undeclared or duplicate names, delta and role
+rules, time ranges. Dimension checks need the files and stay in the utility.
+None of the three needs its output directory to exist.
 """
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from hadrons_xml import _add_option, _xml_scalar
 
-# parseTimeRange's own regex (Contractor.cpp): a bare timeslice or an
-# inclusive a..b range, no sign. A negative offset is written as nt - k and
-# left to TIME_MOD.
+# parseTimeRange's regex (A2ADenseContract.hpp): a bare timeslice or an
+# inclusive a..b range, no sign.
 TIME_RANGE = r"^([0-9]+|[0-9]+\.\.[0-9]+)$"
 
 
-def _elem(parent, **fields):
-    el = ET.SubElement(parent, "elem") if parent is not None else ET.Element("elem")
-    for key, val in fields.items():
-        if val is not None:
-            _add_option(el, key, val)
-    return el
+def _bool(parent, key, val):
+    # Not via _add_option: its bool guard lists the Hadrons module options
+    # that are genuinely bool, and these belong to the utilities' structs.
+    ET.SubElement(parent, key).text = _xml_scalar(bool(val))
 
 
-def global_par(nt, disk_vector_dir, output, traj_start, traj_end, traj_step=1,
-               n_hit=None):
-    """The <global> block. n_hit is the hit count every dense field in the par
-    file shares, and setting it selects the ContractorDense schema.
+def _write(root, xml_path):
+    xml_path = Path(xml_path)
+    ET.indent(root, space="  ")
+    xml_path.parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(root).write(xml_path, encoding="unicode", xml_declaration=True)
+    return xml_path
 
-    The two directories have opposite requirements, both of them traps:
 
-      output          MUST already exist. saveCorrelator calls
-                      makeFileDir(dir), but makeFileDir creates dirname() of
-                      what it is handed -- so passing the output directory
-                      creates its PARENT and never the directory itself, and
-                      ResultWriter then fails to create a file inside a
-                      directory nobody made. Create it in the submission
-                      script. Affects Contractor, ContractorDense,
-                      FlexibleContractor and BubbleContractor alike, since
-                      they share saveCorrelator.
-
-      diskVectorDir   its per-matrix subdirectory, <diskVectorDir>/<name>,
-                      must NOT exist. DiskVectorBase hard-errors on a
-                      pre-existing one (DiskVector.hpp:274-283) before
-                      creating it, deliberately, since it wipes what it owns.
-                      Hadrons::mkdir is create_directories, so the parent
-                      chain comes for free -- only the leaf must be absent.
-                      A crashed run therefore needs it removed before a retry.
-    """
-    el = ET.Element("global")
-    traj = ET.SubElement(el, "trajCounter")
+def _traj(parent, traj_start, traj_end, traj_step):
+    traj = ET.SubElement(parent, "trajCounter")
     ET.SubElement(traj, "start").text = str(traj_start)
     ET.SubElement(traj, "end").text = str(traj_end)
     ET.SubElement(traj, "step").text = str(traj_step)
-    _add_option(el, "nt", nt)
-    if n_hit is not None:
-        _add_option(el, "nHit", n_hit)
-    _add_option(el, "diskVectorDir", disk_vector_dir)
-    _add_option(el, "output", output)
-    return el
 
 
-def a2a_matrix(file, dataset, name, cache_size, n_low=None, time_slice_io=False):
-    """One <a2aMatrix> entry. `file` carries the @traj@ token; `dataset` is the
-    HDF5 group, which for a meson field is the ioname that A2AMesonField built
-    from the gamma and momentum (the dataset inside it is always a2aMatrix).
+def _check_time_range(expr, nt, what):
+    pieces = str(expr).split()
+    if not pieces:
+        raise ValueError(f"{what}: empty time expression")
+    for piece in pieces:
+        if not re.match(TIME_RANGE, piece):
+            raise ValueError(f"{what}: '{piece}' is not a number or a..b")
+        lo, _, hi = piece.partition("..")
+        if int(lo) > int(hi or lo) or int(hi or lo) >= nt:
+            raise ValueError(f"{what}: '{piece}' is not an increasing range below nt = {nt}")
 
-    n_low is the low-mode count of this field's DENSE (row) axis only. Its
-    column axis belongs to the other term of the contraction, and is checked
-    against that term's mode space at run time -- so one value per matrix both
-    suffices and cross-checks the pairing.
 
-    time_slice_io says the field was written one file per timeslice, in which
-    case `file` is still the whole-field path and the contractor inserts
-    ".t%04d" before the .h5 the way A2AMesonField's filenameFn does. Both it
-    and n_low belong to the ContractorDense schema, so they are emitted
-    together or not at all."""
+def axis(dense, n_low, time_offset=0):
+    """One mode axis (AxisPar). A dense axis is a compact W leg, any other an
+    expanded mode index; time_offset is 0 on every base field."""
+    return dict(dense=bool(dense), nLow=int(n_low), timeOffset=int(time_offset))
+
+
+def matrix_par(name, file, dataset, row, col, time_slice_io=True):
+    """One <a2aMatrix> entry (MatrixPar). `file` carries the @traj@ token;
+    with time_slice_io it is the whole-field stem <x>.h5 and slice t is read
+    from <x>.tNNNN.h5. `dataset` is the HDF5 group (the ioname)."""
     el = ET.Element("elem")
+    _add_option(el, "name", name)
     _add_option(el, "file", file)
     _add_option(el, "dataset", dataset)
-    _add_option(el, "cacheSize", cache_size)
-    if n_low is not None:
-        _add_option(el, "timeSliceIO", bool(time_slice_io))
-        _add_option(el, "nLow", n_low)
-    _add_option(el, "name", name)
+    _add_option(el, "timeSliceIO", bool(time_slice_io))
+    for side, ax in (("row", row), ("col", col)):
+        a = ET.SubElement(el, side)
+        _bool(a, "dense", ax["dense"])
+        _add_option(a, "nLow", ax["nLow"])
+        _add_option(a, "timeOffset", ax["timeOffset"])
     return el
 
 
-def product(terms, times, translations, translation_average):
-    """One <product> entry: a trace of the named matrices.
+class _DenseJob:
+    """<global> plus the shared <a2aMatrix> list; subclasses add their own
+    entry list."""
 
-    `terms` is the matrix names in trace order, `times` one time expression per
-    term EXCEPT the last -- the last term's time is swept over all nt and sets
-    the correlator's abscissa. `translations` shifts every term together."""
-    el = ET.Element("elem")
-    _add_option(el, "terms", " ".join(terms) if isinstance(terms, (list, tuple)) else terms)
-    _add_option(el, "times", list(times))
-    _add_option(el, "translations", translations)
-    # Not via _add_option: its bool guard lists the Hadrons module options that
-    # are genuinely bool, and this one belongs to the contractor's ProductPar.
-    ET.SubElement(el, "translationAverage").text = _xml_scalar(translation_average)
-    return el
-
-
-def bubble_product(terms, times):
-    """One <product> entry for BubbleContractorDense, whose ProductPar is only
-    {terms, times} -- no translations and no average, because a bubble is
-    indexed by where it SITS rather than by a separation.
-
-    The ordinary contractor sweeps the sink over all nt for each source and
-    bins at [tLast - dt]; the bubble takes the single sink at times[0] + dt and
-    bins at [dt], keeping the t dependence that correlating two bubbles in
-    analysis needs. One term is the bare tr[Pi(t)] -- the disconnected sigma
-    loop -- and takes no times at all; two terms is tr[Pi(t) Pi(t + times[0])],
-    the two-pion bubble with its internal separation fixed."""
-    el = ET.Element("elem")
-    _add_option(el, "terms", " ".join(terms) if isinstance(terms, (list, tuple)) else terms)
-    _add_option(el, "times", list(times))
-    return el
-
-
-class ContractorJob:
-    """One contractor par file: a <global> block plus the matrices and
-    products added to it."""
-
-    # Term counts the dense schema accepts. Two for a trace of a product;
-    # BubbleJob widens it to one, the bare tr[Pi(t)]. Three or more waits on a
-    # dense matrix product, which PixPi needs too.
-    DENSE_TERMS = (2,)
-
-    def __init__(self, nt, disk_vector_dir, output, traj_start, traj_end,
-                 traj_step=1, n_hit=None):
+    def __init__(self, nt, traj_start, traj_end, traj_step=1, output=None):
         self.nt = nt
-        self.n_hit = n_hit
         self.root = ET.Element("grid")
-        self.root.append(global_par(nt, disk_vector_dir, output, traj_start,
-                                    traj_end, traj_step, n_hit))
+        glob = ET.SubElement(self.root, "global")
+        _traj(glob, traj_start, traj_end, traj_step)
+        _add_option(glob, "nt", nt)
+        if output is not None:
+            _add_option(glob, "output", output)
         self.matrices_el = ET.SubElement(self.root, "a2aMatrix")
-        self.products_el = ET.SubElement(self.root, "product")
-        self._matrices = {}
-        self._products = []
+        self.matrices = {}
 
-    def add_matrix(self, file, dataset, name, cache_size, n_low=None,
-                   time_slice_io=False):
-        if name in self._matrices:
+    def add_matrix(self, name, file, dataset, row, col, time_slice_io=True):
+        if name in self.matrices:
             raise ValueError(f"duplicate a2aMatrix name '{name}'")
         if time_slice_io and not str(file).endswith(".h5"):
-            raise ValueError(
-                f"timeSliceIO file '{file}' must end in .h5; the contractor "
-                f"inserts .t%04d before that suffix")
-        self._matrices[name] = n_low
-        self.matrices_el.append(a2a_matrix(file, dataset, name, cache_size,
-                                           n_low, time_slice_io))
+            raise ValueError(f"timeSliceIO file '{file}' must end in .h5; the "
+                             f"utility inserts .tNNNN before that suffix")
+        for side, ax in (("row", row), ("col", col)):
+            if not 0 <= ax["timeOffset"] < self.nt:
+                raise ValueError(f"'{name}' {side} timeOffset {ax['timeOffset']} "
+                                 f"is not in 0..nt-1")
+        self.matrices[name] = dict(file=file, dataset=dataset, row=row, col=col,
+                                   time_slice_io=time_slice_io)
+        self.matrices_el.append(matrix_par(name, file, dataset, row, col, time_slice_io))
         return name
 
-    def add_product(self, terms, times, translations, translation_average=True):
-        terms = list(terms) if isinstance(terms, (list, tuple)) else terms.split()
-        times = list(times)
-        self._products.append((terms, times, translations))
-        self.products_el.append(product(terms, times, translations,
-                                        translation_average))
-
-    def _validate(self):
-        dense = self.n_hit is not None
-        for name, n_low in self._matrices.items():
-            if (n_low is None) != (not dense):
-                raise ValueError(
-                    f"matrix '{name}' {'lacks' if dense else 'carries'} nLow but "
-                    f"global {'has' if dense else 'has no'} nHit; a par file is "
-                    f"either wholly dense or wholly expanded")
-        import re
-        for terms, times, translations in self._products:
-            # Contractor.cpp:319 -- the last term has no time of its own.
-            if len(times) != len(terms) - 1:
-                raise ValueError(
-                    f"product {terms} has {len(times)} times, expected "
-                    f"{len(terms) - 1} (the last term is swept over all nt)")
-            if dense and len(terms) not in self.DENSE_TERMS:
-                raise ValueError(
-                    f"product {terms} has {len(terms)} terms; this schema takes "
-                    f"{self.DENSE_TERMS} until a dense matrix product lands")
-            for t in terms:
-                if t not in self._matrices:
-                    raise ValueError(f"product term '{t}' is not a declared a2aMatrix")
-            exprs = list(times)
-            if translations is not None:
-                exprs.append(translations)
-            for expr in exprs:
-                for piece in str(expr).split():
-                    if not re.match(TIME_RANGE, piece):
-                        raise ValueError(
-                            f"'{piece}' is not a time expression parseTimeRange "
-                            f"accepts (a number or a..b, no sign)")
-                    for v in re.findall(r"[0-9]+", piece):
-                        if int(v) >= self.nt:
-                            raise ValueError(f"time {v} is not below nt = {self.nt}")
+    def _check_declared(self, name, what):
+        if name not in self.matrices:
+            raise ValueError(f"{what}: '{name}' is not a declared a2aMatrix")
 
     def write(self, xml_path):
         self._validate()
-        xml_path = Path(xml_path)
-        ET.indent(self.root, space="  ")
-        xml_path.parent.mkdir(parents=True, exist_ok=True)
-        ET.ElementTree(self.root).write(xml_path, encoding="unicode",
-                                        xml_declaration=True)
-        return xml_path
+        return _write(self.root, xml_path)
+
+
+class PixPiJob(_DenseJob):
+    """An A2APixPi par file: products C[t] = L[t + delta_l] R[t + delta_r],
+    one timeSliceIO output per product. The deltas are unsigned with at least
+    one zero, so a product is labelled by its unshifted factor. Inputs must be
+    base fields: zero time offsets, not products."""
+
+    def __init__(self, nt, traj_start, traj_end, traj_step=1):
+        super().__init__(nt, traj_start, traj_end, traj_step)
+        self.products_el = ET.SubElement(self.root, "product")
+        self.products = []
+
+    def add_product(self, left, right, delta_l, delta_r, output, dataset):
+        """Returns the product's a2aMatrix entry as keyword arguments for a
+        contractor job's add_matrix: rows are L's rows offset by delta_l, cols
+        R's cols offset by delta_r."""
+        what = f"product '{output}'"
+        self._check_declared(left, what)
+        self._check_declared(right, what)
+        el = ET.SubElement(self.products_el, "elem")
+        _add_option(el, "left", left)
+        _add_option(el, "right", right)
+        _add_option(el, "deltaL", delta_l)
+        _add_option(el, "deltaR", delta_r)
+        _add_option(el, "output", output)
+        _add_option(el, "dataset", dataset)
+        self.products.append((left, right, delta_l, delta_r, output))
+        lrow, rcol = self.matrices[left]["row"], self.matrices[right]["col"]
+        return dict(file=output, dataset=dataset, time_slice_io=True,
+                    row=axis(lrow["dense"], lrow["nLow"], (lrow["timeOffset"] + delta_l) % self.nt),
+                    col=axis(rcol["dense"], rcol["nLow"], (rcol["timeOffset"] + delta_r) % self.nt))
+
+    def _validate(self):
+        outputs = set()
+        for left, right, delta_l, delta_r, output in self.products:
+            what = f"product '{output}'"
+            if delta_l >= self.nt or delta_r >= self.nt or (delta_l and delta_r):
+                raise ValueError(f"{what}: need deltaL, deltaR < nt with at least one zero")
+            if not str(output).endswith(".h5"):
+                raise ValueError(f"{what}: output must end in .h5")
+            if output in outputs:
+                raise ValueError(f"{what}: duplicate output")
+            outputs.add(output)
+            for name in (left, right):
+                m = self.matrices[name]
+                if m["row"]["timeOffset"] or m["col"]["timeOffset"]:
+                    raise ValueError(f"{what}: input '{name}' has a time offset; "
+                                     f"inputs must be base fields")
+
+
+class FlexibleJob(_DenseJob):
+    """A FlexibleContractorDense par file.
+
+    A contraction is tr(T_0 ... T_{n-1}) with each term a (name, role, offset):
+    a source sits at dt + offset, a sink at tLast + offset, offsets taken mod
+    nt. For every dt in `translations` the sink sweeps tLast = dt + s for s in
+    min_t..max_t and bins at s. The first term is a source and cyclic
+    neighbours have different roles: a fixed-offset pair is a product, built
+    with PixPiJob. Without translation_average each dt is its own dataset
+    <name>_dt_<dt>; with it, one averaged dataset <name>. One file per
+    contraction, <output>/<name>.<traj>.h5."""
+
+    ROLES = ("source", "sink")
+
+    def __init__(self, nt, output, traj_start, traj_end, traj_step=1):
+        super().__init__(nt, traj_start, traj_end, traj_step, output)
+        self.contractions_el = ET.SubElement(self.root, "contraction")
+        self.contractions = {}
+
+    def add_contraction(self, name, terms, translations, min_t, max_t,
+                        translation_average):
+        if name in self.contractions:
+            raise ValueError(f"duplicate contraction name '{name}'")
+        terms = [tuple(t) for t in terms]
+        el = ET.SubElement(self.contractions_el, "elem")
+        _add_option(el, "name", name)
+        terms_el = ET.SubElement(el, "terms")
+        for term, role, offset in terms:
+            t = ET.SubElement(terms_el, "elem")
+            _add_option(t, "name", term)
+            _add_option(t, "role", role)
+            _add_option(t, "offset", offset)
+        _add_option(el, "translations", translations)
+        _add_option(el, "min_t", min_t)
+        _add_option(el, "max_t", max_t)
+        _bool(el, "translationAverage", translation_average)
+        self.contractions[name] = (terms, translations, min_t, max_t)
+        return name
+
+    def _validate(self):
+        for name, (terms, translations, min_t, max_t) in self.contractions.items():
+            what = f"contraction '{name}'"
+            if len(terms) < 2:
+                raise ValueError(f"{what}: needs at least two terms")
+            for term, role, _ in terms:
+                self._check_declared(term, what)
+                if role not in self.ROLES:
+                    raise ValueError(f"{what}: role '{role}' is not source or sink")
+            if terms[0][1] != "source":
+                raise ValueError(f"{what}: the first term must be a source")
+            for j, (term, role, _) in enumerate(terms):
+                nxt = terms[(j + 1) % len(terms)]
+                if role == nxt[1]:
+                    raise ValueError(f"{what}: neighbours '{term}' and '{nxt[0]}' are "
+                                     f"both {role}s; build the pair with PixPiJob")
+            if not min_t <= max_t < self.nt:
+                raise ValueError(f"{what}: need min_t <= max_t < nt")
+            _check_time_range(translations, self.nt, what)
+
+
+class BubbleJob(_DenseJob):
+    """A BubbleContractorDense par file.
+
+    A bubble is B[t] = tr(T_0[t + o_0] ...) for every t in 0..nt-1, with one
+    term (a self-trace: the sigma loop, or a two-pion bubble as tr of a
+    PixPiJob product) or two (a pair with no product). One file per bubble,
+    <output>/<name>.<traj>.h5, holding the single dataset <name>."""
+
+    def __init__(self, nt, output, traj_start, traj_end, traj_step=1):
+        super().__init__(nt, traj_start, traj_end, traj_step, output)
+        self.bubbles_el = ET.SubElement(self.root, "bubble")
+        self.bubbles = {}
+
+    def add_bubble(self, name, terms):
+        if name in self.bubbles:
+            raise ValueError(f"duplicate bubble name '{name}'")
+        terms = [tuple(t) for t in terms]
+        el = ET.SubElement(self.bubbles_el, "elem")
+        _add_option(el, "name", name)
+        terms_el = ET.SubElement(el, "terms")
+        for term, offset in terms:
+            t = ET.SubElement(terms_el, "elem")
+            _add_option(t, "name", term)
+            _add_option(t, "offset", offset)
+        self.bubbles[name] = terms
+        return name
+
+    def _validate(self):
+        for name, terms in self.bubbles.items():
+            what = f"bubble '{name}'"
+            if len(terms) not in (1, 2):
+                raise ValueError(f"{what}: needs one or two terms; a longer fixed-"
+                                 f"offset chain is a product, build it with PixPiJob")
+            for term, _ in terms:
+                self._check_declared(term, what)
 
 
 def select_axis(low_size, modes_per_hit, n_hit_in, is_v, hits):
@@ -242,10 +302,7 @@ class SelectHitsJob:
     def __init__(self, traj_start, traj_end, traj_step=1):
         self.root = ET.Element("grid")
         glob = ET.SubElement(self.root, "global")
-        traj = ET.SubElement(glob, "trajCounter")
-        ET.SubElement(traj, "start").text = str(traj_start)
-        ET.SubElement(traj, "end").text = str(traj_end)
-        ET.SubElement(traj, "step").text = str(traj_step)
+        _traj(glob, traj_start, traj_end, traj_step)
         self.selection_el = ET.SubElement(self.root, "selection")
         self.n = 0
 
@@ -254,37 +311,13 @@ class SelectHitsJob:
         _add_option(el, "file", file)
         _add_option(el, "dataset", dataset)
         _add_option(el, "output", output)
-        for side, axis in (("left", left), ("right", right)):
-            ax = ET.SubElement(el, side)
+        for side, ax in (("left", left), ("right", right)):
+            a = ET.SubElement(el, side)
             for key in ("lowSize", "modesPerHit", "nHitIn"):
-                _add_option(ax, key, axis[key])
-            # Not via _add_option, for the same reason as translationAverage.
-            ET.SubElement(ax, "isV").text = _xml_scalar(axis["isV"])
-            _add_option(ax, "hits", axis["hits"])
+                _add_option(a, key, ax[key])
+            _bool(a, "isV", ax["isV"])
+            _add_option(a, "hits", ax["hits"])
         self.n += 1
 
     def write(self, xml_path):
-        xml_path = Path(xml_path)
-        ET.indent(self.root, space="  ")
-        xml_path.parent.mkdir(parents=True, exist_ok=True)
-        ET.ElementTree(self.root).write(xml_path, encoding="unicode",
-                                        xml_declaration=True)
-        return xml_path
-
-
-class BubbleJob(ContractorJob):
-    """A BubbleContractorDense par file.
-
-    Same <global> and <a2aMatrix> blocks as ContractorJob -- including nHit,
-    which is global because a bubble is never correlated against one built from
-    a different hit count -- but its products carry no translations or average.
-    One or two terms: tr[Pi(t)] for the disconnected sigma loop, or
-    tr[Pi(t) Pi(t + times[0])] for a two-pion bubble."""
-
-    DENSE_TERMS = (1, 2)
-
-    def add_product(self, terms, times):
-        terms = list(terms) if isinstance(terms, (list, tuple)) else terms.split()
-        times = list(times)
-        self._products.append((terms, times, None))
-        self.products_el.append(bubble_product(terms, times))
+        return _write(self.root, xml_path)

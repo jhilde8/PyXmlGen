@@ -11,11 +11,11 @@ for every smearing state: unsmeared plus each rung of config.SMEAR_LADDER.
     kaon   tr[sl(t) ls(0)]               at rest only, so only in p000
     pion   tr[pi^p(t) pi^-p(0)]          27 momenta, back to back
 
-Every declared matrix is loaded and held before the first product runs, so a
-par file's footprint is the sum of its fields: at 8 hits a non-zero pion
-momentum is six 61 GB fields plus one 61 GB transpose cache, about 430 GB, and
-p000 with the kaon about 410 GB -- both inside a quarter node's 544 GB. The AMA
-set is 1-hit and a quarter of that even with both accuracies.
+FlexibleContractorDense loads every field a contraction uses before the first
+one runs, so a par file's footprint is the sum of its fields: at 8 hits a
+non-zero pion momentum is six 61 GB fields, about 370 GB, inside a quarter
+node's 544 GB. The AMA set is 1-hit and a quarter of that even with both
+accuracies.
 
 Each non-zero pion field is loaded by two par files, its own momentum's and its
 partner's (p001 and p00m1 both need both fields). Grouping by shell or by +-p
@@ -26,25 +26,24 @@ Momentum-shell averaging, and averaging p against -p, is post-processing.
 The sigma is deliberately absent: tr[ll(t) ll(0)] is only its connected piece,
 and the disconnected one needs BubbleContractorDense.
 
-Names. Matrix names reach the correlator filename through saveCorrelator's
-stem, terms[0]_times[0]_terms.back(), so they are built to read as the
-correlator: field, accuracy, smearing, then momentum,
+Names. Each contraction is named source_0_sink, from matrix names built to
+read as the correlator: field, accuracy, smearing, then momentum,
 
     pi_w2p03_n11_p001_0_pi_w2p03_n11_p00m1
     sl_exact_w4p1_n45_p000_0_ls_exact_w4p1_n45_p000
 
 with the full smearing rung tag, the same string the meson field directories
-carry. Momentum tags are filename-safe (m for minus); ioname() renders the raw
-integers A2AMesonField used for the HDF5 group. Every stem is distinct, so all
-par files of a preset share one correlator directory -- averaged and _noavg
-included, since the per-source files carry _dt_<dt>.
+carry; --no-average appends _noavg. Momentum tags are filename-safe (m for
+minus); ioname() renders the raw integers A2AMesonField used for the HDF5
+group. Every name is distinct, so all par files of a preset share one
+correlator directory, <name>.<traj>.h5 each.
 
 Par files all land in output/contractor/ as par.<tag>.xml, tag being
-2pt_<momentum> plus trailing modifiers (_ama, _noavg). The tag also names the
-job's diskVectorDir, so tag, par file, scratch and log line up.
+2pt_<momentum> plus trailing modifiers (_ama, _noavg), so tag, par file and
+log line up.
 
-nLow belongs to a field's DENSE (row) axis, its LEFT leg -- W_s for sl, W_l for
-ls and pi. It does not depend on the hit count.
+Axes come from config.field_axes: the left leg is the row, dense for a W --
+W_s for sl, W_l for ls and pi -- and the right leg the expanded V col.
 """
 import argparse
 import sys
@@ -54,12 +53,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from contractor_xml import ContractorJob
+from contractor_xml import FlexibleJob
 
 TRAJ = 1520
 
-# The AMA job solves one hit twice (config.AMA_HIT), so its fields are 1-hit
-# and nHit must say so.
+# The AMA job solves one hit twice (config.AMA_HIT), so its fields are 1-hit;
+# the contractor reads the hit count off each field's dimensions.
 PRESETS = {
     "production": dict(tag="h8", accuracies=[""], base=config.MF_BASE,
                        n_hit=config.N_HIT, out="contract_2pt"),
@@ -72,12 +71,6 @@ def smearings():
     """Unsmeared, then every ladder rung by its full tag -- the suffix
     gen_meson_fields puts on the smeared field stems."""
     return [""] + [f"_{rung_tag}" for rung_tag, _, _ in config.SMEAR_LADDER]
-
-
-def n_low(field):
-    """nLow of the field's left (dense W) leg."""
-    flavor = config.FIELD_LEGS[field][0][0]
-    return config.N_LOW if config.FLAVOR_HAS_LOW[flavor] else 0
 
 
 def ioname(gamma, mom):
@@ -119,39 +112,34 @@ def momenta(channel):
 
 
 def build(tag, products, preset, translation_average):
-    """One par file: every product at this momentum, for every accuracy and
-    smearing state. A matrix used twice -- the pion at p000, whose two legs are
-    the same field -- is declared once.
+    """One par file: every two-point function at this momentum, for every
+    accuracy and smearing state. A matrix used twice -- the pion at p000,
+    whose two legs are the same field -- is declared once.
 
-    cacheSize = nt holds each field resident so the disk vector never spills;
-    Riker has no node-local disk. translations is always 0..nt-1: dt is the
-    SOURCE timeslice and the sink sweeps all nt regardless. With the average
-    off each source is written raw to its own _dt_<dt> file -- the averaged path
-    divides by translations.size(), the per-source path does not."""
-    job = ContractorJob(
-        nt=config.N_T,
-        disk_vector_dir=f"{config.CONTRACTION_ROOT}/dv/{tag}",
-        output=f"{config.CONTRACTION_ROOT}/{preset['out']}",
-        traj_start=TRAJ, traj_end=TRAJ + 1, traj_step=1,
-        n_hit=preset["n_hit"])
-    declared = set()
+    translations is always 0..nt-1 and the sink sweeps every separation. With
+    the average off each source is its own dataset <name>_dt_<dt>, written
+    raw; the averaged one divides by the number of translations."""
+    job = FlexibleJob(nt=config.N_T,
+                      output=f"{config.CONTRACTION_ROOT}/{preset['out']}",
+                      traj_start=TRAJ, traj_end=TRAJ + 1)
     for acc in preset["accuracies"]:
         for smear in smearings():
             for legs in products:
-                terms = []
+                names = []
                 for field, gamma, mom in legs:
                     name = f"{field}{acc}{smear}_{mom_tag(mom)}"
-                    if name not in declared:
-                        job.add_matrix(
-                            file=field_file(field, gamma, mom, preset, acc, smear),
-                            dataset=ioname(gamma, mom), name=name,
-                            cache_size=config.N_T, n_low=n_low(field),
-                            time_slice_io=True)
-                        declared.add(name)
-                    terms.append(name)
-                job.add_product(terms=terms, times=["0"],
-                                translations=f"0..{config.N_T - 1}",
-                                translation_average=translation_average)
+                    if name not in job.matrices:
+                        row, col = config.field_axes(field)
+                        job.add_matrix(name=name,
+                                       file=field_file(field, gamma, mom, preset, acc, smear),
+                                       dataset=ioname(gamma, mom), row=row, col=col)
+                    names.append(name)
+                source, sink = names
+                job.add_contraction(
+                    name=f"{source}_0_{sink}" + ("" if translation_average else "_noavg"),
+                    terms=[(source, "source", 0), (sink, "sink", 0)],
+                    translations=f"0..{config.N_T - 1}", min_t=0, max_t=config.N_T - 1,
+                    translation_average=translation_average)
     return job
 
 
@@ -186,9 +174,6 @@ def main():
           f"{len(preset['accuracies'])} accuracy(ies))")
     print(f"  meson fields  {preset['base']}/<stem>.{TRAJ}/")
     print(f"  correlators   {config.CONTRACTION_ROOT}/{preset['out']}/")
-    print("\nThe <output> directory must exist before the run: saveCorrelator"
-          "\ncalls makeFileDir(dir), which creates dirname(dir) -- the parent --"
-          "\nand never the directory itself.")
 
 
 if __name__ == "__main__":

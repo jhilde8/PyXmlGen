@@ -79,6 +79,15 @@ FIELD_LEGS = {
 }
 
 
+def field_axes(kind):
+    """(row, col) of a base meson field as contractor_xml axes: a W leg is
+    dense, a V leg expanded, nLow is the leg flavour's low-mode count, and a
+    base field has no time offset."""
+    from contractor_xml import axis
+    return tuple(axis(vw == "w", N_LOW if FLAVOR_HAS_LOW[flavor] else 0)
+                 for flavor, vw in FIELD_LEGS[kind])
+
+
 def low_filestem(flavor, vw):
     assert FLAVOR_HAS_LOW[flavor]
     return f"{LOW_VW}/lo_{vw}"
