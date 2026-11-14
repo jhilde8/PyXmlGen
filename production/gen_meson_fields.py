@@ -202,9 +202,10 @@ LOOP_BLOCK_STRANGE = config.N_SC
 
 # mf_pi rightBlock, every smearing state, a factor of the V_l mode count: the
 # 27-momentum phased right pack at RIGHT_BLOCK ran the device out of memory.
-# 128 is known to fit in both jobs; h8 14288 = 94 x 152, ama 3536 = 26 x 136.
+# h8 14288 = 94 x 152; ama 3536 = 34 x 104. The ama job page-faulted once in
+# 16 runs on its last pion field at 136 (2026-11-13), so 104 for margin.
 PION_RIGHT_BLOCK = 152
-PION_RIGHT_BLOCK_AMA = 136
+PION_RIGHT_BLOCK_AMA = 104
 
 EMF_TYPES = "0 1 2 3"
 
