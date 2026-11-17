@@ -4,9 +4,27 @@
     gen_contract_2pt.py --ama            the AMA correction hit, both accuracies
     gen_contract_2pt.py --no-average     one correlator per source timeslice
     gen_contract_2pt.py --channel kaon   just the kaon
+    gen_contract_2pt.py --pairs all --no-average --tag h8 \\
+        --traj-start 1400 --traj-end 1700 --traj-step 20
+                                         every pion momentum pair, per source
 
 One par file per momentum, holding every two-point function at that momentum
 for every smearing state: unsmeared plus each rung of config.SMEAR_LADDER.
+
+All pairs (--pairs all). The pion only, for every ordered (source, sink) pair
+of the 27 momenta: 729 contractions per smearing state, one par file per
+state, the same smearing at source and sink. These are the inputs of the
+pipi D diagram. Its two traces exchange gluons, so pairs whose momenta do not
+match are physical and feed the off-diagonal momentum shells of the GEVP.
+Every par file holds all 27 fields of its state, ~1.7 TB at 8 hits: one
+whole Riker node (2.2 TB) per file, so the three states are three nodes. The
+back-to-back pairs of the default mode are a subset, so a --pairs all run
+also gives the single-pion two-point functions.
+
+--tag picks the fields' hit tag (mf_pi_<tag>...). A tag other than the
+preset's own also goes on the correlator directory, contract_2pt_<tag>,
+because correlator names carry no hit count and an h8 configuration can also
+have h16 fields.
 
     kaon   tr[sl(t) ls(0)]               at rest only, so only in p000
     pion   tr[pi^p(t) pi^-p(0)]          27 momenta, back to back
@@ -111,19 +129,27 @@ def momenta(channel):
             yield mom_tag(mom), products
 
 
-def build(tag, products, preset, translation_average):
-    """One par file: every two-point function at this momentum, for every
-    accuracy and smearing state. A matrix used twice -- the pion at p000,
-    whose two legs are the same field -- is declared once.
+def pion_pairs():
+    """Every ordered (source, sink) pair of pion momenta, source first."""
+    return [[("pi", config.GAMMA5, src), ("pi", config.GAMMA5, snk)]
+            for src in config.PION_MOM for snk in config.PION_MOM]
+
+
+def build(products, preset, translation_average, smears, trajs):
+    """One par file: every two-point function of `products`, for every
+    accuracy and every smearing state in `smears`. A matrix used more than
+    once -- the pion at p000 in the default mode, every pion field with
+    --pairs all -- is declared once.
 
     translations is always 0..nt-1 and the sink sweeps every separation. With
     the average off each source is its own dataset <name>_dt_<dt>, written
     raw; the averaged one divides by the number of translations."""
+    traj_start, traj_end, traj_step = trajs
     job = FlexibleJob(nt=config.N_T,
                       output=f"{config.CONTRACTION_ROOT}/{preset['out']}",
-                      traj_start=TRAJ, traj_end=TRAJ + 1)
+                      traj_start=traj_start, traj_end=traj_end, traj_step=traj_step)
     for acc in preset["accuracies"]:
-        for smear in smearings():
+        for smear in smears:
             for legs in products:
                 names = []
                 for field, gamma, mom in legs:
@@ -153,26 +179,49 @@ def main():
     parser.add_argument("--no-average", action="store_true",
                         help="write one correlator per source timeslice "
                              "(_dt_<dt>) instead of their average")
+    parser.add_argument("--pairs", choices=("back-to-back", "all"),
+                        default="back-to-back",
+                        help="all: the pion for every ordered momentum pair, "
+                             "one par file per smearing state (--channel is "
+                             "ignored)")
+    parser.add_argument("--tag", help="hit tag of the fields, e.g. h16 "
+                                      "(default: the preset's)")
+    parser.add_argument("--traj-start", type=int, default=TRAJ)
+    parser.add_argument("--traj-end", type=int,
+                        help="exclusive, as trajCounter (default: start + 1)")
+    parser.add_argument("--traj-step", type=int, default=20)
     args = parser.parse_args()
 
-    preset = PRESETS["ama" if args.ama else "production"]
+    preset = dict(PRESETS["ama" if args.ama else "production"])
+    if args.tag and args.tag != preset["tag"]:
+        preset["tag"] = args.tag
+        preset["out"] += f"_{args.tag}"
+    trajs = (args.traj_start,
+             args.traj_end if args.traj_end is not None else args.traj_start + 1,
+             args.traj_step)
     par_dir = Path(config.OUTPUT_ROOT) / "contractor"
 
     # The job tag names the par file, the job's diskVectorDir, and -- by the
     # submission scripts' convention -- the log. Modifiers trail the momentum.
     suffix = ("_ama" if args.ama else "") + ("_noavg" if args.no_average else "")
+    if preset["tag"] != PRESETS["ama" if args.ama else "production"]["tag"]:
+        suffix = f"_{preset['tag']}" + suffix
 
-    n_files = 0
-    for mom, products in momenta(args.channel):
-        tag = f"2pt_{mom}{suffix}"
-        build(tag, products, preset, not args.no_average).write(
-            par_dir / f"par.{tag}.xml")
-        n_files += 1
+    if args.pairs == "all":
+        jobs = [(f"2pt_pion_pairs_{smear[1:] or 'unsmeared'}", pion_pairs(), [smear])
+                for smear in smearings()]
+    else:
+        jobs = [(f"2pt_{mom}", products, smearings())
+                for mom, products in momenta(args.channel)]
 
-    print(f"wrote {n_files} par files to {par_dir}"
-          f"   (nHit = {preset['n_hit']}, {len(smearings())} smearing states, "
-          f"{len(preset['accuracies'])} accuracy(ies))")
-    print(f"  meson fields  {preset['base']}/<stem>.{TRAJ}/")
+    for tag, products, smears in jobs:
+        build(products, preset, not args.no_average, smears, trajs).write(
+            par_dir / f"par.{tag}{suffix}.xml")
+
+    print(f"wrote {len(jobs)} par files to {par_dir}"
+          f"   (fields {preset['tag']}, trajectories {trajs[0]}..{trajs[1] - 1} "
+          f"step {trajs[2]}, {len(preset['accuracies'])} accuracy(ies))")
+    print(f"  meson fields  {preset['base']}/<stem>.@traj@/")
     print(f"  correlators   {config.CONTRACTION_ROOT}/{preset['out']}/")
 
 
