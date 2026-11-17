@@ -5,6 +5,7 @@ dense contraction suite (contractor_xml):
     ProductJob       A2AMesonFieldProduct     reference for PixPiJob
     FlexibleDWCJob   FlexibleContractorDWC    reference for FlexibleJob
     BubbleDWCJob     BubbleContractorDWC      reference for BubbleJob
+    K2pipiDWCJob     K2pipiContractorDWC      reference for K2pipiJob
 
 Test-only: production par files come from contractor_xml. Matrices take the
 same axis dicts as contractor_xml (axis(), config.field_axes), translated to
@@ -138,3 +139,44 @@ class BubbleDWCJob(_DWCContractorJob):
     @staticmethod
     def stem(names, times):
         return "".join(f"{n}_{t}_" for n, t in zip(names, times)) + names[-1]
+
+
+class K2pipiDWCJob(_DWCContractorJob):
+    """A K2pipiContractorDWC par file. Terms are (name, offset), the fixed
+    chain at dt + offset; lastMats are his swept fields, each also listed once
+    in the top-level <a2aMatrixLast>, which write() fills. The output stem is
+    name_offset per term joined by '_'; datasets are <stem>_<last>_dt_<dt>, or
+    <stem>_<last> averaged. He refuses two products with one stem."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.last_el = ET.Element("a2aMatrixLast")
+        self.root.insert(list(self.root).index(self.products_el), self.last_el)
+        self.last = []
+        self.stems = set()
+
+    def add_contraction(self, terms, last_mats, translations, min_t, max_t,
+                        translation_average):
+        stem = self.stem(terms)
+        if stem in self.stems:
+            raise ValueError(f"duplicate fixed chain '{stem}'")
+        self.stems.add(stem)
+        el = ET.SubElement(self.products_el, "elem")
+        _add_option(el, "terms", " ".join(name for name, _ in terms))
+        _add_option(el, "times", [offset for _, offset in terms])
+        _add_option(el, "lastMats", list(last_mats))
+        _add_option(el, "translations", translations)
+        _add_option(el, "min_t", min_t)
+        _add_option(el, "max_t", max_t)
+        _bool(el, "translationAverage", translation_average)
+        self.last += [m for m in last_mats if m not in self.last]
+        return stem
+
+    def write(self, xml_path):
+        for name in self.last:
+            ET.SubElement(self.last_el, "elem").text = name
+        return super().write(xml_path)
+
+    @staticmethod
+    def stem(terms):
+        return "_".join(f"{name}_{offset}" for name, offset in terms)

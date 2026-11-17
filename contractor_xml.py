@@ -12,6 +12,7 @@ The contraction utilities all sit on Hadrons/utilities/A2ADenseContract.hpp:
     PixPiJob       A2APixPi                products C[t] = L[t+dL] R[t+dR]
     FlexibleJob    FlexibleContractorDense  N-term source/sink traces
     BubbleJob      BubbleContractorDense    1- and 2-term bubbles, every t
+    K2pipiJob      K2pipiContractorDense    tr(fixed chain x swept field)
 
 They share one <a2aMatrix> entry (MatrixPar): a name, the file and HDF5 group,
 timeSliceIO, and a row and a col axis, each {dense, nLow, timeOffset}. Base
@@ -279,6 +280,60 @@ class BubbleJob(_DenseJob):
                                  f"offset chain is a product, build it with PixPiJob")
             for term, _ in terms:
                 self._check_declared(term, what)
+
+
+class K2pipiJob(_DenseJob):
+    """A K2pipiContractorDense par file.
+
+    A contraction is C_E(dt, tau) = tr(F(dt) E[dt + tau]) with the fixed chain
+    F(dt) = T_0[dt + o_0] ... T_{k-1}[dt + o_{k-1}], terms (name, offset) with
+    k >= 1, and E each field of `swept`. tau runs over min_t..max_t, dt over
+    `translations`. The fixed fields are loaded whole and every F(dt) is kept;
+    each swept field is streamed one slice at a time, read once for all the
+    contractions that list it. One file per contraction,
+    <output>/<name>.<traj>.h5, holding per swept field E the datasets
+    <name>_<E>_dt_<dt>, or <name>_<E> with translation_average."""
+
+    def __init__(self, nt, output, traj_start, traj_end, traj_step=1):
+        super().__init__(nt, traj_start, traj_end, traj_step, output)
+        self.contractions_el = ET.SubElement(self.root, "contraction")
+        self.contractions = {}
+
+    def add_contraction(self, name, terms, swept, translations, min_t, max_t,
+                        translation_average):
+        if name in self.contractions:
+            raise ValueError(f"duplicate contraction name '{name}'")
+        terms = [tuple(t) for t in terms]
+        swept = list(swept)
+        el = ET.SubElement(self.contractions_el, "elem")
+        _add_option(el, "name", name)
+        terms_el = ET.SubElement(el, "terms")
+        for term, offset in terms:
+            t = ET.SubElement(terms_el, "elem")
+            _add_option(t, "name", term)
+            _add_option(t, "offset", offset)
+        _add_option(el, "swept", swept)
+        _add_option(el, "translations", translations)
+        _add_option(el, "min_t", min_t)
+        _add_option(el, "max_t", max_t)
+        _bool(el, "translationAverage", translation_average)
+        self.contractions[name] = (terms, swept, translations, min_t, max_t)
+        return name
+
+    def _validate(self):
+        for name, (terms, swept, translations, min_t, max_t) in self.contractions.items():
+            what = f"contraction '{name}'"
+            if not terms:
+                raise ValueError(f"{what}: needs at least one fixed term")
+            if not swept:
+                raise ValueError(f"{what}: needs at least one swept field")
+            if len(set(swept)) != len(swept):
+                raise ValueError(f"{what}: a swept field is listed twice")
+            for term in [t for t, _ in terms] + swept:
+                self._check_declared(term, what)
+            if not min_t <= max_t < self.nt:
+                raise ValueError(f"{what}: need min_t <= max_t < nt")
+            _check_time_range(translations, self.nt, what)
 
 
 def select_axis(low_size, modes_per_hit, n_hit_in, is_v, hits):

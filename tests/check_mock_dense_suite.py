@@ -1,5 +1,6 @@
 """Compare FlexibleContractorDense correlators against FlexibleContractorDWC,
-and BubbleContractorDense bubbles against BubbleContractorDWC.
+BubbleContractorDense bubbles against BubbleContractorDWC, and
+K2pipiContractorDense against K2pipiContractorDWC.
 
     python3 check_mock_dense_suite.py <run dir> [--tol TOL] [--traj N]
 
@@ -13,6 +14,10 @@ relative L2 of 1e-13 per dataset.
 Bubbles are matched to Masaaki's output by his term stem, rolled by our first
 term's offset. The manifest's identities check that tr of an A2APixPi product
 equals the 2-term trace of its factors, in both tools' outputs.
+
+K2pipi results are matched per swept field: ours <name>_<swept>[_dt_<dt>]
+against his <stem>_<last>[_dt_<dt>], where the swept field carries our matrix
+name (with its _ts/_sf copy suffix) and his the plain field name.
 """
 import argparse
 import json
@@ -80,6 +85,27 @@ def main():
     for x, y in manifest.get("identities", []):
         ok &= report(f"ours {x} vs {y}", bubble("test", x), bubble("test", y))
         ok &= report(f"ref  {x} vs {y}", refs[x], refs[y])
+
+    print("== K2pipi: K2pipiContractorDense vs K2pipiContractorDWC")
+    for c in manifest.get("k2pipi", []):
+        ref = os.path.join(args.run, "k2pipi_ref", f"{c['ref']}.{args.traj}.h5")
+        test = os.path.join(args.run, "k2pipi_test", f"{c['test']}.{args.traj}.h5")
+        for ours, his in c["swept"]:
+            rstem, tstem = f"{c['ref']}_{his}", f"{c['test']}_{ours}"
+            if c["average"]:
+                pairs = [(rstem, tstem)]
+            else:
+                pairs = [(f"{rstem}_dt_{dt}", f"{tstem}_dt_{dt}") for dt in c["translations"]]
+            worst, scale = 0.0, 0.0
+            for rds, tds in pairs:
+                r, t = correlator(ref, rds), correlator(test, tds)
+                n = np.linalg.norm(r)
+                worst = max(worst, np.linalg.norm(r - t) / n if n > 0 else np.linalg.norm(t))
+                scale = max(scale, n)
+            good = worst <= args.tol and scale > 0
+            ok &= good
+            print(f"  {'PASS' if good else 'FAIL'}  {tstem:<22} vs {rstem:<32} "
+                  f"{len(pairs):2d} dataset(s)  worst rel L2 {worst:.2e}  |ref| {scale:.3e}")
 
     print("OVERALL:", "ALL PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)

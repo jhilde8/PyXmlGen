@@ -10,6 +10,7 @@ the comparison also exercises both of our reader paths. Written under <run dir>:
     par.product.{ref,test}.xml    A2AMesonFieldProduct / A2APixPi
     par.flexible.{ref,test}.xml   FlexibleContractorDWC / FlexibleContractorDense
     par.bubble.{ref,test}.xml     BubbleContractorDWC / BubbleContractorDense
+    par.k2pipi.{ref,test}.xml     K2pipiContractorDWC / K2pipiContractorDense
     manifest.json                 which reference output each of ours is checked against
 
 Our par files come from contractor_xml, the production toolkit, and Masaaki's
@@ -29,23 +30,28 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from contractor_xml import BubbleJob, FlexibleJob, PixPiJob, axis
-from dwc_xml import BubbleDWCJob, FlexibleDWCJob, ProductJob
+from contractor_xml import BubbleJob, FlexibleJob, K2pipiJob, PixPiJob, axis
+from dwc_xml import BubbleDWCJob, FlexibleDWCJob, K2pipiDWCJob, ProductJob
 
 NT, NSC = 8, 12
 TRAJ = (0, 1)
 out = os.path.abspath(sys.argv[1])
 rng = np.random.default_rng(20261110)
 
-# name: (rowDense, colDense, nLow, nHit, real). Both axes share nLow and nHit.
+# name: ((rowDense, rowNLow), (colDense, colNLow), nHit, real). ww_ls is the
+# kaon (light W rows, strange W cols), vv_sl* the operator fields (strange V
+# rows, light V cols).
 FIELDS = {
-    "wv_l":   (True,  False, 5, 2, "<f8"),
-    "wv_l_f": (True,  False, 5, 2, "<f4"),
-    "wv_s":   (True,  False, 0, 2, "<f8"),
-    "vw_l":   (False, True,  5, 2, "<f8"),
-    "wv_a":   (True,  False, 5, 1, "<f8"),
-    "vv_l":   (False, False, 5, 2, "<f8"),
-    "ww_l":   (True,  True,  5, 2, "<f8"),
+    "wv_l":    ((True,  5), (False, 5), 2, "<f8"),
+    "wv_l_f":  ((True,  5), (False, 5), 2, "<f4"),
+    "wv_s":    ((True,  0), (False, 0), 2, "<f8"),
+    "vw_l":    ((False, 5), (True,  5), 2, "<f8"),
+    "wv_a":    ((True,  5), (False, 5), 1, "<f8"),
+    "vv_l":    ((False, 5), (False, 5), 2, "<f8"),
+    "ww_l":    ((True,  5), (True,  5), 2, "<f8"),
+    "ww_ls":   ((True,  5), (True,  0), 2, "<f8"),
+    "vv_sl":   ((False, 0), (False, 5), 2, "<f8"),
+    "vv_sl_f": ((False, 0), (False, 5), 2, "<f4"),
 }
 
 # name: (left, right, deltaL, deltaR). Single-file left inputs where marked.
@@ -58,7 +64,7 @@ PRODUCTS = {
     "p_ord":     ("wv_l",   "vw_l", 0, 0),
     "p_ama_dR5": ("wv_a",   "wv_a", 0, 5),
 }
-SINGLE_FILE_INPUTS = {"wv_l_f", "vw_l"}
+SINGLE_FILE_INPUTS = {"wv_l_f", "vw_l", "vv_sl_f"}
 
 # name: ([(term, sink, offset)], translations, min_t, max_t, translationAverage)
 CONTRACTIONS = {
@@ -96,15 +102,27 @@ BUBBLES = {
 # of its factors.
 IDENTITIES = [("b_prod", "b_pair"), ("b_prodL", "b_pairL")]
 
+# name: ([(term, offset)], [swept], translations, min_t, max_t,
+# translationAverage). k_MK* are type 3 (M K at Delta = 3, both product
+# orientations), k_sK the sigma-like base-field chain, k_K the K-op trace,
+# k_raw a three-term chain multiplied in the tool.
+K2PIPI = {
+    "k_MK_dR2": ([("p_wv_dR2", 3), ("ww_ls", 0)], ["vv_sl", "vv_sl_f"], "0..7", 0, 5, False),
+    "k_MK_dL3": ([("p_wv_dL3", 3), ("ww_ls", 0)], ["vv_sl"], "0..7", 0, 5, False),
+    "k_sK":     ([("wv_l", 2), ("ww_ls", 0)], ["vv_sl"], "1 3..6", 1, 4, False),
+    "k_K":      ([("ww_ls", 0)], ["vv_sl", "vv_sl_f"], "0..7", 0, 7, True),
+    "k_raw":    ([("wv_l", 3), ("wv_l", 0), ("ww_ls", 0)], ["vv_sl_f"], "0..7", 2, 6, True),
+}
+
 
 def field_axes(name):
-    rd, cd, nlow, _, _ = FIELDS[name]
-    return axis(rd, nlow), axis(cd, nlow)
+    row, col, _, _ = FIELDS[name]
+    return axis(*row), axis(*col)
 
 
 def field_dims(name):
-    rd, cd, nlow, nhit, _ = FIELDS[name]
-    return tuple(nlow + nhit * (NSC if d else NT * NSC) for d in (rd, cd))
+    row, col, nhit, _ = FIELDS[name]
+    return tuple(nlow + nhit * (NSC if dense else NT * NSC) for dense, nlow in (row, col))
 
 
 def to_compound(a, real):
@@ -218,6 +236,23 @@ def bubbles(entries):
     return stems
 
 
+def k2pipi(entries):
+    used = sorted({t for terms, swept, *_ in K2PIPI.values()
+                   for t in [t for t, _ in terms] + swept})
+    test = K2pipiJob(NT, f"{out}/k2pipi_test", *TRAJ)
+    ref = K2pipiDWCJob(NT, f"{out}/dv_k2pipi_ref", f"{out}/k2pipi_ref", *TRAJ)
+    declare_test(test, used, entries)
+    declare_ref(ref, used, entries)
+    stems = {}
+    for name, (terms, swept, tr, lo, hi, avg) in K2PIPI.items():
+        test.add_contraction(name, [(test_term(t), o) for t, o in terms],
+                             [test_term(e) for e in swept], tr, lo, hi, avg)
+        stems[name] = ref.add_contraction(terms, swept, tr, lo, hi, avg)
+    test.write(f"{out}/par.k2pipi.test.xml")
+    ref.write(f"{out}/par.k2pipi.ref.xml")
+    return stems
+
+
 def expand_translations(tr):
     ts = []
     for tok in tr.split():
@@ -231,6 +266,7 @@ products_ref()
 entries = products_test()
 flex_stems = flexible(entries)
 bub_stems = bubbles(entries)
+k2pipi_stems = k2pipi(entries)
 
 manifest = {
     "nt": NT,
@@ -244,9 +280,16 @@ manifest = {
         for name, terms in BUBBLES.items()
     ],
     "identities": IDENTITIES,
+    "k2pipi": [
+        {"test": name, "ref": k2pipi_stems[name], "average": avg,
+         "swept": [[test_term(e), e] for e in swept],
+         "translations": expand_translations(tr)}
+        for name, (terms, swept, tr, lo, hi, avg) in K2PIPI.items()
+    ],
 }
 with open(os.path.join(out, "manifest.json"), "w") as f:
     json.dump(manifest, f, indent=1)
 
 print(f"wrote {len(FIELDS)} fields, {len(PRODUCTS)} products, "
-      f"{len(CONTRACTIONS)} contractions, {len(BUBBLES)} bubbles under {out}")
+      f"{len(CONTRACTIONS)} contractions, {len(BUBBLES)} bubbles, "
+      f"{len(K2PIPI)} K2pipi contractions under {out}")

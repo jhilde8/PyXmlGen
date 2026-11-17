@@ -1,10 +1,42 @@
 """
 Site-specific constants for the A2A vector layout (N_HIT hits per
-configuration) and physics parameters. Paths are checked against the Frontier
-tree when the generated XML is reviewed there before submission.
+configuration) and physics parameters. Paths are checked against the target
+machine's tree when the generated XML is reviewed there before submission.
+
+Every path is built from the roots of one machine, chosen by the environment
+variable PYXMLGEN_MACHINE (default "frontier"; see MACHINES).
 """
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class MachineRoots:
+    """Where one machine keeps the 64I tree: `jobs` holds the job working
+    directories (CG, MF, A2AContractions), `data` the solver and meson-field
+    output (vw, noise, converted, mf, mf_ama), `configs` the gauge files."""
+    jobs: str
+    data: str
+    configs: str
+
+
+_FRONTIER_WORLD = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I"
+_FRONTIER_PROJ = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I"
+_AURORA = "/lus/flare/projects/LatticeFlavor/jhilde/k2pipipbc/main_64I"
+
+MACHINES = {
+    "frontier": MachineRoots(jobs=_FRONTIER_WORLD, data=_FRONTIER_PROJ,
+                             configs=f"{_FRONTIER_WORLD}/configs"),
+    "aurora": MachineRoots(jobs=f"{_AURORA}/jobs", data=_AURORA,
+                           configs=f"{_AURORA}/configs"),
+}
+
+MACHINE = os.environ.get("PYXMLGEN_MACHINE", "frontier")
+if MACHINE not in MACHINES:
+    raise ValueError(f"PYXMLGEN_MACHINE={MACHINE!r} is not one of "
+                     f"{sorted(MACHINES)}")
+ROOTS = MACHINES[MACHINE]
 
 N_HIT = 8
 
@@ -65,7 +97,7 @@ EXACT_ONLY_FLAVORS = {"c"}
 
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
-VW_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/vw"
+VW_BASE = f"{ROOTS.data}/vw"
 
 # Low modes: one set (light only), one file per vector, filestem
 # "<LOW_VW>/lo_v" / "lo_w" (module appends ".<traj>/elemN.bin").
@@ -88,7 +120,7 @@ VW_EXACT = f"{VW_BASE}/exact"
 # (MIO::SaveSpinColorDiagonalNoise / LoadTimeDilutedSpinColorDiagonalNoise).
 # The dense W array replaces the N_HIGH expanded fields with N_SC = 12
 # combined fields per hit (MIO::LoadCombinedNoise).
-NOISE_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/noise"
+NOISE_BASE = f"{ROOTS.data}/noise"
 N_NOISE_PER_STEM = 1
 N_SC = 12
 
@@ -177,9 +209,9 @@ SPARSE_ROOT = str(Path(VW_BASE).parent / "sparse")
 
 
 # --- CG: high-mode V solves (production/gen_cg.py) ------------------------
-# Working directory of the CG jobs on Frontier, and where their XML and
-# schedule files live (cf. XML_DIR for the meson-field jobs).
-CG_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/CG"
+# Working directory of the CG jobs, and where their XML and schedule files
+# live (cf. XML_DIR for the meson-field jobs).
+CG_DIR = f"{ROOTS.jobs}/CG"
 CG_XML_DIR = f"{CG_DIR}/xml"
 CG_GRAPH = f"{CG_DIR}/graph.gv"
 
@@ -202,7 +234,7 @@ CG_ACTIONS = {
 
 # Light deflation: the coarse eigenpack, and the BLAS guesser built from it.
 CG_EIGENPACK = dict(
-    filestem="/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/converted/vec",
+    filestem=f"{ROOTS.data}/converted/vec",
     size_fine=200, size_coarse=2000, block_size="4 4 4 4 12",
     # Coarse vectors read on 8-rank partitions (MIO::LoadCoarseEigenPackSplit),
     # independent of the solver split: on the full grid every rank opens
@@ -411,7 +443,7 @@ RIGHT_BLOCK = 256
 # average, so it does not scale with the lattice spacing. APE_N sets a smoothing
 # radius that grows as sqrt(N) in lattice units, so it scales as a^-2: 48I's 25
 # becomes 46 on 64I, taken as 45 to match the covariant smearing's N.
-GAUGE_FILE = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/configs/ckpoint_lat"
+GAUGE_FILE = f"{ROOTS.configs}/ckpoint_lat"
 APE_ALPHA = 0.615384615
 APE_N = 45
 
@@ -434,7 +466,7 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
 # Lustre working directory, so a relative "./xml/schedule.*.txt" only works
 # because of that choice. Writing it absolute removes the dependency. MF_DIR
 # also holds check_mf.py's manifests and reports.
-MF_DIR = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/MF"
+MF_DIR = f"{ROOTS.jobs}/MF"
 XML_DIR = f"{MF_DIR}/xml"
 
 # Placeholder for the meson field output directory. Hadrons resolves a
@@ -465,12 +497,12 @@ def schedule_file(run_id):
 # timeSliceIO "<output>.<traj>/<ioname>.t%04d.h5", so a field lives at
 # <MF_BASE>/<stem>.<traj>/ and the contractor gets the whole-field path with
 # @traj@ still in it.
-MF_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/mf"
+MF_BASE = f"{ROOTS.data}/mf"
 
 # The AMA correction hit: one extra sloppy hit plus its exact solve. Same
 # layout, different tree, and the fields there are 1-hit -- so a par file
 # contracting them needs nHit = 1, not N_HIT. See [[project_ama_correction_hit]].
-MF_AMA_BASE = "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/mf_ama"
+MF_AMA_BASE = f"{ROOTS.data}/mf_ama"
 
 # Every drained field of each contraction job, as tag -> (base, {field:
 # {bytes per file: files}}), for check_mf.py. Tabulated from a good
@@ -552,5 +584,5 @@ MF_EXPECTED = {
 # index.size() >= cacheSize), so with cacheSize = N_T it stays empty -- but the
 # directory is still created, and it must be per-process, since the contractor
 # refuses a pre-existing <diskVectorDir>/<matrix name>.
-CONTRACTION_ROOT = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/A2AContractions"
+CONTRACTION_ROOT = f"{ROOTS.jobs}/A2AContractions"
 

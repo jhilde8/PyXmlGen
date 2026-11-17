@@ -6,7 +6,8 @@
 # e.g. Hadrons/build_cpu/utilities and a scratch directory. Build first with
 #
 #     make A2APixPi FlexibleContractorDense BubbleContractorDense \
-#          A2AMesonFieldProduct FlexibleContractorDWC BubbleContractorDWC
+#          K2pipiContractorDense A2AMesonFieldProduct FlexibleContractorDWC \
+#          BubbleContractorDWC K2pipiContractorDWC
 #
 # in the utilities build dir (all are EXTRA_PROGRAMS). The run dir must not
 # exist: Masaaki's contractor refuses existing disk-vector directories.
@@ -20,6 +21,8 @@
 #   4. BubbleContractorDWC (bub_ref/) vs BubbleContractorDense (bub_test/),
 #      plus tr(product) against the 2-term trace of its factors, in the same
 #      check script.
+#   5. K2pipiContractorDWC (k2pipi_ref/) vs K2pipiContractorDense
+#      (k2pipi_test/), per swept field, in the same check script.
 set -e
 
 bin=$(realpath "$1")
@@ -38,5 +41,7 @@ python3 "$here/../diffs/diff_a2am_ts.py" ref test --tol 0 --mode both | grep -E 
 "$bin/FlexibleContractorDense" par.flexible.test.xml > log.FlexibleContractorDense 2>&1
 "$bin/BubbleContractorDWC"     par.bubble.ref.xml    > log.BubbleContractorDWC 2>&1
 "$bin/BubbleContractorDense"   par.bubble.test.xml   > log.BubbleContractorDense 2>&1
+"$bin/K2pipiContractorDWC"     par.k2pipi.ref.xml    > log.K2pipiContractorDWC 2>&1
+"$bin/K2pipiContractorDense"   par.k2pipi.test.xml   > log.K2pipiContractorDense 2>&1
 echo "== correlators: FlexibleContractorDense vs FlexibleContractorDWC"
 python3 "$here/check_mock_dense_suite.py" "$run"
