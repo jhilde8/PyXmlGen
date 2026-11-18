@@ -11,15 +11,17 @@
 One par file per momentum, holding every two-point function at that momentum
 for every smearing state: unsmeared plus each rung of config.SMEAR_LADDER.
 
-All pairs (--pairs all). The pion only, for every ordered (source, sink) pair
-of the 27 momenta: 729 contractions per smearing state, one par file per
-state, the same smearing at source and sink. These are the inputs of the
-pipi D diagram. Its two traces exchange gluons, so pairs whose momenta do not
-match are physical and feed the off-diagonal momentum shells of the GEVP.
-Every par file holds all 27 fields of its state, ~1.7 TB at 8 hits: one
-whole Riker node (2.2 TB) per file, so the three states are three nodes. The
-back-to-back pairs of the default mode are a subset, so a --pairs all run
-also gives the single-pion two-point functions.
+All pairs (--pairs all). The pion only, for every unordered pair of the 27
+momenta: 378 contractions per smearing state, one par file per state, the
+same smearing at source and sink. The other 351 ordered pairs follow from
+cyclicity of the trace (see pion_pairs) and are rebuilt in the analysis.
+These are the inputs of the pipi D diagram. Its two traces exchange gluons,
+so pairs whose momenta do not match are physical and feed the off-diagonal
+momentum shells of the GEVP. Every par file holds all 27 fields of its
+state, ~1.7 TB at 8 hits: one whole Riker node (2.2 TB) per file, so the
+three states are three nodes. Each back-to-back pair of the default mode is
+there in one order or the other, so a --pairs all run also gives the
+single-pion two-point functions.
 
 --tag picks the fields' hit tag (mf_pi_<tag>...). A tag other than the
 preset's own also goes on the correlator directory, contract_2pt_<tag>,
@@ -130,9 +132,14 @@ def momenta(channel):
 
 
 def pion_pairs():
-    """Every ordered (source, sink) pair of pion momenta, source first."""
-    return [[("pi", config.GAMMA5, src), ("pi", config.GAMMA5, snk)]
-            for src in config.PION_MOM for snk in config.PION_MOM]
+    """Every unordered pair of pion momenta, source first, the source no later
+    than the sink in config.PION_MOM. The trace is cyclic and every source
+    and sink time is computed, so the reversed pair is a relabelling,
+        C_{q->p}(dt, s) = C_{p->q}((dt + s) % nt, (nt - s) % nt),
+    rebuilt in the analysis."""
+    moms = config.PION_MOM
+    return [[("pi", config.GAMMA5, moms[i]), ("pi", config.GAMMA5, moms[j])]
+            for i in range(len(moms)) for j in range(i, len(moms))]
 
 
 def build(products, preset, translation_average, smears, trajs):
@@ -181,7 +188,7 @@ def main():
                              "(_dt_<dt>) instead of their average")
     parser.add_argument("--pairs", choices=("back-to-back", "all"),
                         default="back-to-back",
-                        help="all: the pion for every ordered momentum pair, "
+                        help="all: the pion for every unordered momentum pair, "
                              "one par file per smearing state (--channel is "
                              "ignored)")
     parser.add_argument("--tag", help="hit tag of the fields, e.g. h16 "
