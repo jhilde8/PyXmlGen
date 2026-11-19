@@ -1,7 +1,7 @@
 """Single-particle two-point functions from the dense-W meson fields.
 
     gen_contract_2pt.py                  8-hit production set
-    gen_contract_2pt.py --ama            the AMA correction hit, both accuracies
+    gen_contract_2pt.py --tag ama        the AMA correction hit, both accuracies
     gen_contract_2pt.py --no-average     one correlator per source timeslice
     gen_contract_2pt.py --channel kaon   just the kaon
     gen_contract_2pt.py --pairs all --no-average --tag h8 \\
@@ -23,8 +23,10 @@ three states are three nodes. Each back-to-back pair of the default mode is
 there in one order or the other, so a --pairs all run also gives the
 single-pion two-point functions.
 
---tag picks the fields' hit tag (mf_pi_<tag>...). A tag other than the
-preset's own also goes on the correlator directory, contract_2pt_<tag>,
+--tag picks the whole input. ama is the AMA preset: the 1-hit fields under
+MF_AMA_BASE, sloppy and exact in each par file. Any hN is the production
+preset with that tag (mf_pi_<tag>...). A tag other than h8 also goes on the
+correlator directory, contract_2pt_<tag>,
 because correlator names carry no hit count and an h8 configuration can also
 have h16 fields.
 
@@ -180,9 +182,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--channel", choices=("kaon", "pion", "all"),
                         default="all")
-    parser.add_argument("--ama", action="store_true",
-                        help="the AMA correction hit: 1-hit fields under "
-                             "MF_AMA_BASE, sloppy and exact in each par file")
     parser.add_argument("--no-average", action="store_true",
                         help="write one correlator per source timeslice "
                              "(_dt_<dt>) instead of their average")
@@ -191,16 +190,20 @@ def main():
                         help="all: the pion for every unordered momentum pair, "
                              "one par file per smearing state (--channel is "
                              "ignored)")
-    parser.add_argument("--tag", help="hit tag of the fields, e.g. h16 "
-                                      "(default: the preset's)")
+    parser.add_argument("--tag", default=PRESETS["production"]["tag"],
+                        help="hit tag of the fields: hN for N sloppy hits, or "
+                             "ama for the AMA hit, sloppy and exact")
     parser.add_argument("--traj-start", type=int, default=TRAJ)
     parser.add_argument("--traj-end", type=int,
                         help="exclusive, as trajCounter (default: start + 1)")
     parser.add_argument("--traj-step", type=int, default=20)
     args = parser.parse_args()
 
-    preset = dict(PRESETS["ama" if args.ama else "production"])
-    if args.tag and args.tag != preset["tag"]:
+    # The tag picks everything: ama is the AMA preset, any hN the production
+    # one with that tag.
+    ama = args.tag == PRESETS["ama"]["tag"]
+    preset = dict(PRESETS["ama" if ama else "production"])
+    if args.tag != preset["tag"]:
         preset["tag"] = args.tag
         preset["out"] += f"_{args.tag}"
     trajs = (args.traj_start,
@@ -210,9 +213,8 @@ def main():
 
     # The job tag names the par file, the job's diskVectorDir, and -- by the
     # submission scripts' convention -- the log. Modifiers trail the momentum.
-    suffix = ("_ama" if args.ama else "") + ("_noavg" if args.no_average else "")
-    if preset["tag"] != PRESETS["ama" if args.ama else "production"]["tag"]:
-        suffix = f"_{preset['tag']}" + suffix
+    suffix = ("" if args.tag == PRESETS["production"]["tag"] else f"_{args.tag}") \
+        + ("_noavg" if args.no_average else "")
 
     if args.pairs == "all":
         jobs = [(f"2pt_pion_pairs_{smear[1:] or 'unsmeared'}", pion_pairs(), [smear])
