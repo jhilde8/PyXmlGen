@@ -1,7 +1,7 @@
 """The pipi cross diagram C, (A10) of pions_A2A, at rest.
 
     gen_contract_C.py --timing                     one small par file to time C
-    gen_contract_C.py --timing --tag ama --width w4p1_n45 --deltas 5
+    gen_contract_C.py --timing --tag ama --width w4p1_n45 --deltas 8
 
 The contraction. With the D diagram's labels, the sink pions at ts+t (p) and
 ts+t+Delta (-p), the source pions at ts-Delta (q) and ts (-q),
@@ -25,7 +25,7 @@ decided by the timing run, so only --timing exists for now.
 
 Names. Source first, like the two-point functions,
 
-    C_pi_w2p03_n11_d3_p001_0_pi_w2p03_n11_p010_noavg
+    C_pi_w2p03_n11_d6_p001_0_pi_w2p03_n11_p010_noavg
 
 for q = p001 at the source and p = p010 at the sink: C_<source stem>_d<Delta>
 _<q>_0_<sink stem>_<p>, the stems those of gen_contract_2pt (pi, accuracy,
@@ -34,9 +34,9 @@ contract_C[_<tag>].
 
 --timing writes par.C_timing<suffix>.xml: one width, the first --deltas value,
 and (000,000), (001,001), (001,010) on 5 fields. The log gives the Eigen
-thread count, "Loaded N field(s) in X s", and "products X s, traces Y s" per
-contraction: the per-field load and per-contraction compute that any tiling
-is built from.
+thread count, "Loaded N field(s) in X s", and "gathers X s, products Y s,
+traces Z s" per contraction: the per-field load and per-contraction compute
+that any tiling is built from.
 """
 import argparse
 import sys
@@ -48,7 +48,8 @@ import config
 from contractor_xml import FlexibleJob
 from gen_contract_2pt import PRESETS, TRAJ, field_file, ioname, mom_tag, negate, smearings
 
-DELTAS = [3, 5, 7, 9]
+# 6 is the 48I choice in lattice units, 8 the same physical separation on 64I.
+DELTAS = [6, 8]
 MAX_T = 48
 TIMING_PAIRS = [([0, 0, 0], [0, 0, 0]), ([0, 0, 1], [0, 0, 1]), ([0, 0, 1], [0, 1, 0])]
 

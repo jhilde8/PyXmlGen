@@ -78,6 +78,20 @@ CONTRACTIONS = {
     "c_rect":  ([("p_wv_dR2", False, NT - 2), ("p_wv_dR2", True, 0)], "0..7", 0, 7, False),
     "c_cross": ([("wv_l", False, 0), ("wv_l", True, 0), ("wv_l", False, 2), ("wv_l", True, 2)],
                 "0..7", 1, 5, False),
+    # Chains of four: rows gathered (vw), a product's dense row/col timeOffset
+    # inside a chain, the 1-hit field.
+    "c_cross_vw":     ([("vw_l", False, 0), ("vw_l", True, 0), ("vw_l", False, 2),
+                        ("vw_l", True, 2)], "0..7", 1, 5, False),
+    "c_cross_prod":   ([("p_wv_dL3", False, 5), ("wv_l", True, 0), ("wv_l", False, 2),
+                        ("wv_l", True, 1)], "0..7", 1, 5, False),
+    "c_cross_prodvw": ([("p_vw_dR1", False, 0), ("vw_l", True, 0), ("vw_l", False, 2),
+                        ("vw_l", True, 1)], "0..7", 1, 5, False),
+    "c_cross_ama":    ([("wv_a", False, 0), ("wv_a", True, 0), ("wv_a", False, 2),
+                        ("wv_a", True, 2)], "1 3..5", 1, 5, False),
+    # No dense axis anywhere (undiluted data): every edge expanded on
+    # expanded, nothing gathered, every product over the full index.
+    "c_cross_full":   ([("vv_l", False, 0), ("vv_l", True, 0), ("vv_l", False, 2),
+                        ("vv_l", True, 2)], "0..7", 1, 5, False),
 }
 
 # name: [(term, offset)]. Masaaki's term 0 sits at dt, so ours with a nonzero
@@ -105,13 +119,15 @@ IDENTITIES = [("b_prod", "b_pair"), ("b_prodL", "b_pairL")]
 # name: ([(term, offset)], [swept], translations, min_t, max_t,
 # translationAverage). k_MK* are type 3 (M K at Delta = 3, both product
 # orientations), k_sK the sigma-like base-field chain, k_K the K-op trace,
-# k_raw a three-term chain multiplied in the tool.
+# k_raw a three-term chain multiplied in the tool (type 3 with M built in
+# the job), k_raw_off the same with every offset nonzero.
 K2PIPI = {
     "k_MK_dR2": ([("p_wv_dR2", 3), ("ww_ls", 0)], ["vv_sl", "vv_sl_f"], "0..7", 0, 5, False),
     "k_MK_dL3": ([("p_wv_dL3", 3), ("ww_ls", 0)], ["vv_sl"], "0..7", 0, 5, False),
     "k_sK":     ([("wv_l", 2), ("ww_ls", 0)], ["vv_sl"], "1 3..6", 1, 4, False),
     "k_K":      ([("ww_ls", 0)], ["vv_sl", "vv_sl_f"], "0..7", 0, 7, True),
     "k_raw":    ([("wv_l", 3), ("wv_l", 0), ("ww_ls", 0)], ["vv_sl_f"], "0..7", 2, 6, True),
+    "k_raw_off": ([("wv_l", 5), ("wv_l", 1), ("ww_ls", 3)], ["vv_sl"], "0..7", 1, 5, False),
 }
 
 
