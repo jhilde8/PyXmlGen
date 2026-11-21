@@ -55,6 +55,12 @@ per flavour: layout.CG<f>[.<tag>].txt, one line per srun with its node count,
 estimated walltime and ranges, to check the cut and to drive the submission
 script.
 
+On a machine with config.REPLICAS (Aurora: a, b) every srun is written once
+per replica, run_id CG<f>.NN.<rep>, writing the replica's own tree
+config.vw_base(rep) instead of vw/; the layout file then has one line per
+srun and replica. Test_a2a_checksum_scan --compare checks the replicas against
+each other bitwise before anything moves into vw/.
+
 After a failure, check_cg.py reports what is missing on disk and
 gen_cg_repack.py rebuilds the remainder with build_srun. Both take the same
 tag and rebuild the same layout from config, per configuration
@@ -76,9 +82,10 @@ from srun_layout import batch_of, cg_srun_ranges
 FLAVORS = ("l", "s", "c")
 
 
-def srun_run_id(flavor, index, hits=config.HitSet()):
+def srun_run_id(flavor, index, hits=config.HitSet(), replica=None):
     tag = "" if hits == config.HitSet() else f"{hits.tag}."
-    return f"CG{flavor}.{tag}{index:02d}"
+    rep = "" if replica is None else f".{replica}"
+    return f"CG{flavor}.{tag}{index:02d}{rep}"
 
 
 def n_hit_of(parser, tag):
@@ -99,6 +106,25 @@ def flavors_and_n_hit(parser, targets):
     if len(tags) > 1:
         parser.error(f"more than one tag: {' '.join(tags)}")
     return flavors, n_hit_of(parser, tags[0] if tags else None)
+
+
+def add_replica_arg(parser):
+    """--replica for the scripts that read or redo one replica's tree."""
+    parser.add_argument("--replica", choices=config.REPLICAS or None,
+                        help="the replica tree to work on, required on a "
+                             "machine with replicas "
+                             f"({','.join(config.REPLICAS) or 'none here'})")
+
+
+def replica_of(parser, args):
+    """args.replica, required exactly when this machine has replicas: without
+    it a repack would write into the verified tree."""
+    if config.REPLICAS and args.replica is None:
+        parser.error(f"--replica is required on {config.MACHINE} "
+                     f"({','.join(config.REPLICAS)})")
+    if not config.REPLICAS and args.replica is not None:
+        parser.error(f"{config.MACHINE} has no replicas")
+    return args.replica
 
 
 def srun_hours(flavor, sloppy, exact):
@@ -154,7 +180,7 @@ def add_solver(job, flavor, acc, outer, inner, guessers):
     return name
 
 
-def add_range(job, flavor, acc, seg, solver, action, io_split):
+def add_range(job, flavor, acc, seg, solver, action, io_split, replica):
     exact = acc == "exact"
     batch = config.CG_BATCH_SIZE[flavor]
     noise = f"noise_{flavor}_h{seg.hit}"
@@ -165,7 +191,7 @@ def add_range(job, flavor, acc, seg, solver, action, io_split):
 
     ext = config.high_extension(flavor, seg.hit, "v", exact)
     name = f"v_{ext}_{seg.first}"
-    output = config.high_stem(flavor, exact) + ext
+    output = config.high_stem(flavor, exact, replica) + ext
     if batch > 1:
         # The module checks this too, but only once the job is running.
         if seg.count % batch:
@@ -180,10 +206,11 @@ def add_range(job, flavor, acc, seg, solver, action, io_split):
 
 
 def build_srun(flavor, run_id, sloppy, exact, traj=None,
-               io_split=config.CG_IO_SPLIT):
+               io_split=config.CG_IO_SPLIT, replica=None):
     """One srun's job over the given sloppy and exact segments. With traj None
     the trajectory stays as the TRAJ_START / TRAJ_END placeholders. io_split
-    is the light write layout, the IO_SPLIT placeholder by default."""
+    is the light write layout, the IO_SPLIT placeholder by default. replica
+    picks the vector tree written (config.vw_base)."""
     bounds = {} if traj is None else dict(traj_start=traj, traj_end=traj + 1)
     job = Job(run_id, schedule_file=config.cg_schedule_file(run_id,flavor),
               graph_file=config.CG_GRAPH, **bounds)
@@ -201,13 +228,15 @@ def build_srun(flavor, run_id, sloppy, exact, traj=None,
         if any(a == acc for a, _ in work):
             solvers[acc] = add_solver(job, flavor, acc, outer, inner, guessers)
     for acc, seg in work:
-        add_range(job, flavor, acc, seg, solvers[acc], outer, io_split)
+        add_range(job, flavor, acc, seg, solvers[acc], outer, io_split,
+                  replica)
 
     return job, run_id
 
 
-def build_flavor(flavor, hits=config.HitSet()):
-    return [(build_srun(flavor, srun_run_id(flavor, k, hits), s, e), s, e)
+def build_flavor(flavor, hits=config.HitSet(), replica=None):
+    return [(build_srun(flavor, srun_run_id(flavor, k, hits, replica), s, e,
+                        replica=replica), s, e)
             for k, (s, e) in enumerate(cg_srun_ranges(flavor, hits))]
 
 
@@ -228,10 +257,11 @@ def main():
 
     out_dir = Path(config.OUTPUT_ROOT) / "cg"
     suffix = "" if hits == config.HitSet() else f".{hits.tag}"
+    replicas = config.REPLICAS or (None,)
     for flavor in flavors:
         lines = []
         hours = []
-        sruns = build_flavor(flavor, hits)
+        sruns = [s for r in replicas for s in build_flavor(flavor, hits, r)]
         for (job, run_id), sloppy, exact in sruns:
             job.write(out_dir / f"par.{run_id}.xml",
                       out_dir / f"schedule.{run_id}.txt")
@@ -245,8 +275,9 @@ def main():
         (out_dir / f"layout.CG{flavor}{suffix}.txt").write_text(
             "\n".join(lines) + "\n")
         nodes = len(sruns) * config.CG_NODES_PER_SRUN[flavor]
+        reps = f", replicas {','.join(replicas)}" if config.REPLICAS else ""
         print(f"wrote {len(sruns)} sruns for '{flavor}' {hits.tag} "
-              f"(AMA {hits.ama}, {nodes} nodes, est. "
+              f"(AMA {hits.ama}{reps}, {nodes} nodes, est. "
               f"{min(hours):.2f}-{max(hours):.2f} h each) to {out_dir}")
 
 

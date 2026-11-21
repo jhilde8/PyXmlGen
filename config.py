@@ -15,10 +15,16 @@ from pathlib import Path
 class MachineRoots:
     """Where one machine keeps the 64I tree: `jobs` holds the job working
     directories (CG, MF, A2AContractions), `data` the solver and meson-field
-    output (vw, noise, converted, mf, mf_ama), `configs` the gauge files."""
+    output (vw, noise, converted, mf, mf_ama), `configs` the gauge files.
+
+    `replicas` are the tags of the independent runs of every vector job, for
+    machines that can return wrong answers: each replica writes its own tree
+    vw.<tag>, and Test_a2a_checksum_scan --compare checks them bitwise. The
+    untagged vw tree holds only verified vectors. Empty: one untagged run."""
     jobs: str
     data: str
     configs: str
+    replicas: tuple = ()
 
 
 _FRONTIER_WORLD = "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I"
@@ -29,7 +35,7 @@ MACHINES = {
     "frontier": MachineRoots(jobs=_FRONTIER_WORLD, data=_FRONTIER_PROJ,
                              configs=f"{_FRONTIER_WORLD}/configs"),
     "aurora": MachineRoots(jobs=f"{_AURORA}/jobs", data=_AURORA,
-                           configs=f"{_AURORA}/configs"),
+                           configs=f"{_AURORA}/configs", replicas=("a", "b")),
 }
 
 MACHINE = os.environ.get("PYXMLGEN_MACHINE", "frontier")
@@ -37,6 +43,15 @@ if MACHINE not in MACHINES:
     raise ValueError(f"PYXMLGEN_MACHINE={MACHINE!r} is not one of "
                      f"{sorted(MACHINES)}")
 ROOTS = MACHINES[MACHINE]
+REPLICAS = ROOTS.replicas
+
+
+def check_replica(replica):
+    """None (the untagged tree) or one of this machine's REPLICAS."""
+    if replica is not None and replica not in REPLICAS:
+        raise ValueError(f"replica {replica!r} is not one of {REPLICAS} on "
+                         f"{MACHINE}")
+    return replica
 
 N_HIT = 8
 
@@ -97,7 +112,13 @@ EXACT_ONLY_FLAVORS = {"c"}
 
 # --- vector file layout -----------------------------------------------
 # Base directory holding the vw/ subdirectory of A2A vector files.
-VW_BASE = f"{ROOTS.data}/vw"
+def vw_base(replica=None):
+    """The vector tree: vw, or vw.<replica> for one replica's unverified run."""
+    check_replica(replica)
+    return f"{ROOTS.data}/vw" + ("" if replica is None else f".{replica}")
+
+
+VW_BASE = vw_base()
 
 # Low modes: one set (light only), one file per vector, filestem
 # "<LOW_VW>/lo_v" / "lo_w" (module appends ".<traj>/elemN.bin").
@@ -161,16 +182,16 @@ def field_axes(kind):
                  for flavor, vw in FIELD_LEGS[kind])
 
 
-def low_filestem(flavor, vw):
+def low_filestem(flavor, vw, replica=None):
     assert FLAVOR_HAS_LOW[flavor]
-    return f"{LOW_VW}/lo_{vw}"
+    return f"{vw_base(replica)}/low/lo_{vw}"
 
 
-def high_stem(flavor, exact=False):
-    """Directory the V/W loaders prepend to each hit's extension."""
-    if exact or flavor in EXACT_ONLY_FLAVORS:
-        return f"{VW_EXACT}/"
-    return f"{VW_SLOPPY}/"
+def high_stem(flavor, exact=False, replica=None):
+    """Directory the V/W loaders prepend to each hit's extension, in the
+    verified tree or in one replica's."""
+    accuracy = "exact" if exact or flavor in EXACT_ONLY_FLAVORS else "sloppy"
+    return f"{vw_base(replica)}/{accuracy}/"
 
 
 def high_extension(flavor, hit, vw="v", exact=False):

@@ -37,8 +37,8 @@ class RangeScan:
         return sorted(self.missing + tuple(self.wrong_size))
 
 
-def vector_dir(flavor, hit, exact, traj):
-    return (config.high_stem(flavor, exact)
+def vector_dir(flavor, hit, exact, traj, replica=None):
+    return (config.high_stem(flavor, exact, replica)
             + config.high_extension(flavor, hit, "v", exact) + f".{traj}")
 
 
@@ -50,15 +50,16 @@ def _sizes(path):
         return {}
 
 
-def scan(flavor, traj, hits=config.HitSet()):
+def scan(flavor, traj, hits=config.HitSet(), replica=None):
     """Every range of the original layout of `flavor` and `hits`, in srun
-    order, checked against the files of configuration `traj`."""
+    order, checked against the files of configuration `traj` in the verified
+    tree or in one replica's."""
     listings = {}
     out = []
     for k, (sloppy, exact) in enumerate(cg_srun_ranges(flavor, hits)):
         for is_exact, segs in ((True, exact), (False, sloppy)):
             for seg in segs:
-                path = vector_dir(flavor, seg.hit, is_exact, traj)
+                path = vector_dir(flavor, seg.hit, is_exact, traj, replica)
                 if path not in listings:
                     listings[path] = _sizes(path)
                 sizes = listings[path]

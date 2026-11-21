@@ -29,10 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from vector_scan import scan, index_runs
-from gen_cg import flavors_and_n_hit, srun_run_id
+from gen_cg import add_replica_arg, flavors_and_n_hit, replica_of, srun_run_id
 
 
-def report(flavor, traj, scans, hits=config.HitSet()):
+def report(flavor, traj, scans, hits=config.HitSet(), replica=None):
     """Report lines for one flavour and configuration, and whether every
     vector is on disk at full size."""
     groups = {}
@@ -55,7 +55,7 @@ def report(flavor, traj, scans, hits=config.HitSet()):
         line = f"{label:<10} {acc:<6} {total - missing - wrong:>5}/{total}"
         details = []
         for r in ranges:
-            owner = srun_run_id(flavor, r.srun, hits)
+            owner = srun_run_id(flavor, r.srun, hits, replica)
             if r.missing:
                 details.append(f"missing {index_runs(list(r.missing))} "
                                f"({owner})")
@@ -64,7 +64,8 @@ def report(flavor, traj, scans, hits=config.HitSet()):
         lines.append(line + ("  " + "; ".join(details) if details else "  ok"))
 
     complete = n_missing == 0 and n_wrong == 0
-    head = (f"# CG{flavor} {hits.tag} conf {traj}: {present}/{expected} vectors, "
+    rep = "" if replica is None else f" replica {replica}"
+    head = (f"# CG{flavor} {hits.tag}{rep} conf {traj}: {present}/{expected} vectors, "
             f"{n_missing} missing, {n_wrong} wrong size -> "
             f"{'complete' if complete else 'INCOMPLETE'}")
     return [head] + lines, complete
@@ -78,19 +79,23 @@ def main():
                              f"(default h{config.N_HIT})")
     parser.add_argument("--conf", nargs="+", type=int, required=True)
     parser.add_argument("--out", default=config.CG_DIR,
-                        help="where check.CG<f>[.hN].<conf>.txt goes")
+                        help="where check.CG<f>[.hN][.<rep>].<conf>.txt goes")
+    add_replica_arg(parser)
     args = parser.parse_args()
     flavors, n_hit = flavors_and_n_hit(parser, args.targets)
+    replica = replica_of(parser, args)
 
     out_dir = Path(args.out)
-    suffix = "" if n_hit == config.N_HIT else f".h{n_hit}"
+    suffix = ("" if n_hit == config.N_HIT else f".h{n_hit}") + (
+        "" if replica is None else f".{replica}")
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     all_complete = True
     for flavor in flavors:
         for traj in args.conf:
             hits = config.hit_set(n_hit, traj)
-            lines, complete = report(flavor, traj, scan(flavor, traj, hits),
-                                     hits)
+            lines, complete = report(flavor, traj,
+                                     scan(flavor, traj, hits, replica),
+                                     hits, replica)
             all_complete &= complete
             print("\n".join(lines) + "\n")
             text = [f"# checked {stamp}, expected size "

@@ -33,6 +33,10 @@ schedule files):
     par.CG<f>.repack.NN.<conf>.xml, schedule.CG<f>.repack.NN.<conf>.txt
     layout.CG<f>.repack.<conf>.txt   one line per srun, as gen_cg.py's
 
+On a machine with config.REPLICAS, --replica is required: the scan and the
+repack both work on that replica's tree, and every name gets .<rep> after the
+configuration (par.CG<f>.repack.NN.<conf>.<rep>.xml).
+
 The previous repack of the same flavour and configuration is deleted first:
 cmd-run-CG-repack.sh runs every repack XML it finds, and a leftover from a
 larger earlier repack would solve and write the same vectors as a new one.
@@ -49,7 +53,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from srun_layout import Call, batch_of, segments, split
 from vector_scan import scan
-from gen_cg import FLAVORS, build_srun, describe, n_hit_of, srun_hours
+from gen_cg import (FLAVORS, add_replica_arg, build_srun, describe, n_hit_of,
+                    replica_of, srun_hours)
 from check_cg import report
 
 
@@ -74,9 +79,14 @@ def calls_left(flavor, scans):
             for first in sorted(starts)]
 
 
-def clear_previous(out_dir, flavor, traj):
-    for pattern in (f"par.CG{flavor}.repack.*.{traj}.xml",
-                    f"schedule.CG{flavor}.repack.*.{traj}.txt"):
+def repack_suffix(traj, replica):
+    """<conf>, or <conf>.<rep>: one replica's repack never clears another's."""
+    return f"{traj}" + ("" if replica is None else f".{replica}")
+
+
+def clear_previous(out_dir, flavor, suffix):
+    for pattern in (f"par.CG{flavor}.repack.*.{suffix}.xml",
+                    f"schedule.CG{flavor}.repack.*.{suffix}.txt"):
         for path in out_dir.glob(pattern):
             path.unlink()
 
@@ -91,8 +101,10 @@ def main():
     parser.add_argument("--sruns", type=int,
                         help="srun count (default: original sruns with work left)")
     parser.add_argument("--out", default=config.CG_XML_DIR)
+    add_replica_arg(parser)
     args = parser.parse_args()
     n_hit = n_hit_of(parser, args.tag)
+    replica = replica_of(parser, args)
 
     flavor = args.flavor
     out_dir = Path(args.out)
@@ -100,10 +112,11 @@ def main():
     total_sruns = 0
     for traj in args.conf:
         hits = config.hit_set(n_hit, traj)
-        scans = scan(flavor, traj, hits)
-        lines, complete = report(flavor, traj, scans, hits)
+        suffix = repack_suffix(traj, replica)
+        scans = scan(flavor, traj, hits, replica)
+        lines, complete = report(flavor, traj, scans, hits, replica)
         print("\n".join(lines))
-        clear_previous(out_dir, flavor, traj)
+        clear_previous(out_dir, flavor, suffix)
         if complete:
             print("nothing to repack\n")
             continue
@@ -115,10 +128,11 @@ def main():
         layout = []
         hours = []
         for k, srun_calls in enumerate(sruns):
-            run_id = f"CG{flavor}.repack.{k:02d}.{traj}"
+            run_id = f"CG{flavor}.repack.{k:02d}.{suffix}"
             sloppy, exact = segments(flavor, srun_calls)
             job, _ = build_srun(flavor, run_id, sloppy, exact, traj=traj,
-                                io_split=config.CG_SOLVER_SPLIT[flavor])
+                                io_split=config.CG_SOLVER_SPLIT[flavor],
+                                replica=replica)
             job.write(out_dir / f"par.{run_id}.xml",
                       out_dir / f"schedule.{run_id}.txt")
             hours.append(srun_hours(flavor, sloppy, exact))
@@ -128,7 +142,7 @@ def main():
                           f"sloppy={sum(g.count for g in sloppy)} "
                           f"exact={sum(g.count for g in exact)} "
                           f"est={hours[-1]:.2f}h | {ranges}")
-        (out_dir / f"layout.CG{flavor}.repack.{traj}.txt").write_text(
+        (out_dir / f"layout.CG{flavor}.repack.{suffix}.txt").write_text(
             "\n".join(layout) + "\n")
         total_sruns += len(sruns)
         print(f"{len(sruns)} sruns x {nodes} nodes = {len(sruns) * nodes} "
