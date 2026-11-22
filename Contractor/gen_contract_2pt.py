@@ -4,6 +4,9 @@
     gen_contract_2pt.py --tag ama        the AMA correction hit, both accuracies
     gen_contract_2pt.py --no-average     one correlator per source timeslice
     gen_contract_2pt.py --channel kaon   just the kaon
+    gen_contract_2pt.py --channel kaon sigma [--tag ama]
+                                         the at-rest kaon and sigma, one par
+                                         file (par.2pt_kaon_sigma_p000.xml)
     gen_contract_2pt.py --pairs all --no-average --tag h8 \\
         --traj-start 1400 --traj-end 1700 --traj-step 20
                                          every pion momentum pair, per source
@@ -31,7 +34,11 @@ because correlator names carry no hit count and an h8 configuration can also
 have h16 fields.
 
     kaon   tr[sl(t) ls(0)]               at rest only, so only in p000
+    sigma  tr[ll(t) ll(0)]               at rest only, so only in p000
     pion   tr[pi^p(t) pi^-p(0)]          27 momenta, back to back
+
+The fields also exist in the 001 shell, but a moving kaon or sigma belongs
+with a moving-frame pipi analysis, so both stay at rest for now.
 
 FlexibleContractorDense loads every field a contraction uses before the first
 one runs, so a par file's footprint is the sum of its fields: at 8 hits a
@@ -45,8 +52,12 @@ pair would remove that; deliberately left for later.
 
 Momentum-shell averaging, and averaging p against -p, is post-processing.
 
-The sigma is deliberately absent: tr[ll(t) ll(0)] is only its connected piece,
-and the disconnected one needs BubbleContractorDense.
+The kaon and sigma par file (--channel kaon sigma) holds, per smearing state,
+ll (61 GB), ls (53 GB) and sl (3 GB) at 8 hits: ~350 GB over the three
+states, inside a quarter node; the AMA set is ~130 GB for both accuracies.
+
+The sigma here is only the connected piece tr[ll(t) ll(0)]; its disconnected
+piece is the vacuum bubble, from BubbleContractorDense.
 
 Names. Each contraction is named source_0_sink, from matrix names built to
 read as the correlator: field, accuracy, smearing, then momentum,
@@ -118,17 +129,24 @@ def negate(mom):
     return [-p for p in mom]
 
 
-def momenta(channel):
+CHANNELS = ("pion", "kaon", "sigma")
+
+
+def momenta(channels):
     """(momentum tag, products) per par file, where a product is the list of
-    legs (field, gamma, mom) in trace order. The kaon is at rest only."""
+    legs (field, gamma, mom) in trace order. The kaon and sigma are at rest
+    only."""
     for mom in config.PION_MOM:
         products = []
-        if channel in ("pion", "all"):
+        if "pion" in channels:
             products.append([("pi", config.GAMMA5, mom),
                              ("pi", config.GAMMA5, negate(mom))])
-        if channel in ("kaon", "all") and not any(mom):
+        if "kaon" in channels and not any(mom):
             products.append([("sl", config.GAMMA5, mom),
                              ("ls", config.GAMMA5, mom)])
+        if "sigma" in channels and not any(mom):
+            products.append([("ll", config.IDENTITY, mom),
+                             ("ll", config.IDENTITY, mom)])
         if products:
             yield mom_tag(mom), products
 
@@ -180,8 +198,10 @@ def build(products, preset, translation_average, smears, trajs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--channel", choices=("kaon", "pion", "all"),
-                        default="all")
+    parser.add_argument("--channel", nargs="+", choices=CHANNELS + ("all",),
+                        default=["all"],
+                        help="one or more of pion, kaon, sigma; all is every "
+                             "channel. A subset is named in the par file tag")
     parser.add_argument("--no-average", action="store_true",
                         help="write one correlator per source timeslice "
                              "(_dt_<dt>) instead of their average")
@@ -220,8 +240,11 @@ def main():
         jobs = [(f"2pt_pion_pairs_{smear[1:] or 'unsmeared'}", pion_pairs(), [smear])
                 for smear in smearings()]
     else:
-        jobs = [(f"2pt_{mom}", products, smearings())
-                for mom, products in momenta(args.channel)]
+        channels = CHANNELS if "all" in args.channel else \
+            tuple(c for c in CHANNELS if c in args.channel)
+        stem = "2pt" if channels == CHANNELS else "2pt_" + "_".join(channels)
+        jobs = [(f"{stem}_{mom}", products, smearings())
+                for mom, products in momenta(channels)]
 
     for tag, products, smears in jobs:
         build(products, preset, not args.no_average, smears, trajs).write(
