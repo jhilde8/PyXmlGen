@@ -191,9 +191,10 @@ class FlexibleJob(_DenseJob):
     A contraction is tr(T_0 ... T_{n-1}) with each term a (name, role, offset):
     a source sits at dt + offset, a sink at tLast + offset, offsets taken mod
     nt. For every dt in `translations` the sink sweeps tLast = dt + s for s in
-    min_t..max_t and bins at s. The first term is a source and cyclic
-    neighbours have different roles: a fixed-offset pair is a product, built
-    with PixPiJob. Without translation_average each dt is its own dataset
+    min_t..max_t and bins at s. The first term is a source and at least one
+    is a sink. Cyclic neighbours of one role are a fixed product, built once
+    per time in the job and shared by every contraction that has the same
+    factors and offsets. Without translation_average each dt is its own dataset
     <name>_dt_<dt>; with it, one averaged dataset <name>. One file per
     contraction, <output>/<name>.<traj>.h5."""
 
@@ -235,11 +236,8 @@ class FlexibleJob(_DenseJob):
                     raise ValueError(f"{what}: role '{role}' is not source or sink")
             if terms[0][1] != "source":
                 raise ValueError(f"{what}: the first term must be a source")
-            for j, (term, role, _) in enumerate(terms):
-                nxt = terms[(j + 1) % len(terms)]
-                if role == nxt[1]:
-                    raise ValueError(f"{what}: neighbours '{term}' and '{nxt[0]}' are "
-                                     f"both {role}s; build the pair with PixPiJob")
+            if all(role == "source" for _, role, _ in terms):
+                raise ValueError(f"{what}: needs at least one sink term")
             if not min_t <= max_t < self.nt:
                 raise ValueError(f"{what}: need min_t <= max_t < nt")
             _check_time_range(translations, self.nt, what)

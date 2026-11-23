@@ -92,6 +92,23 @@ CONTRACTIONS = {
     # expanded, nothing gathered, every product over the full index.
     "c_cross_full":   ([("vv_l", False, 0), ("vv_l", True, 0), ("vv_l", False, 2),
                         ("vv_l", True, 2)], "0..7", 1, 5, False),
+    # R-like chains, same-role neighbours built as fixed products in the job:
+    # r_shared reuses r_rect's source product, r_wrap's source product wraps
+    # from the last term to the first, r_three has a three-factor product.
+    "r_rect":   ([("wv_l", False, 0), ("wv_l", False, 2), ("wv_l", True, 0),
+                  ("wv_l", True, 2)], "0..7", 1, 5, False),
+    "r_shared": ([("wv_l", False, 0), ("wv_l", False, 2), ("wv_l", True, 1),
+                  ("wv_l", True, 0)], "0..7", 1, 5, False),
+    "r_wrap":   ([("wv_l", False, 0), ("wv_l", True, 0), ("wv_l", True, 2),
+                  ("wv_l", False, 3)], "0..7", 1, 5, False),
+    "r_three":  ([("wv_l", False, 0), ("wv_l", False, 2), ("wv_l", False, 5),
+                  ("wv_l", True, 1)], "0..7", 1, 5, False),
+    "r_vw":     ([("vw_l", False, 0), ("vw_l", False, 1), ("vw_l", True, 0),
+                  ("vw_l", True, 2)], "0..7", 1, 5, False),
+    "r_ama":    ([("wv_a", False, 0), ("wv_a", False, 2), ("wv_a", True, 0),
+                  ("wv_a", True, 2)], "1 3..5", 1, 5, False),
+    "r_full":   ([("vv_l", False, 0), ("vv_l", False, 2), ("vv_l", True, 0),
+                  ("vv_l", True, 2)], "0..7", 1, 5, False),
 }
 
 # name: [(term, offset)]. Masaaki's term 0 sits at dt, so ours with a nonzero
