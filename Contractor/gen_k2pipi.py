@@ -49,9 +49,9 @@ after its last, and the contractions here are grouped by pion pair {p, -p},
 so at most the kaon and two pion fields are resident, plus the fixed chains
 (dense light W x dense strange W per dt).
 
-Files go to <OUTPUT_ROOT>/contractor/k2pipi/par.k2pipi.<tag>.<f>loop_type<T>.xml,
-with TRAJ_START / TRAJ_END left for the submission script to substitute, as
-for the CG. Correlators to contract_k2pipi[_<tag>], one file per contraction.
+Files go to <OUTPUT_ROOT>/contractor/k2pipi/par.k2pipi.<tag>[.<width>].<f>loop_type<T>.xml,
+no width when unsmeared, with TRAJ_START / TRAJ_END left for the submission
+script to substitute, as for the CG. Correlators to contract_k2pipi[_<tag>], one file per contraction.
 """
 import argparse
 import sys
@@ -183,7 +183,8 @@ def main():
     for k, (loop, emf_type) in enumerate(tasks):
         job = build(preset, smear, loop, emf_type, gammas, k == 0, args.tseps,
                     args.delta, output)
-        path = job.write(out_dir / f"par.k2pipi.{args.tag}.{loop}loop_type{emf_type}.xml")
+        path = job.write(out_dir / f"par.k2pipi.{args.tag}{smear.replace('_', '.', 1)}"
+                                   f".{loop}loop_type{emf_type}.xml")
         n_swept = len({e for _, s, *_ in job.contractions.values() for e in s})
         print(f"  {path.name:36s} {len(job.contractions):4d} contractions, "
               f"{n_swept} swept field(s){' with the mix' if k == 0 else ''}")
