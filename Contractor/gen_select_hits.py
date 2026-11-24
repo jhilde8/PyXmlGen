@@ -13,8 +13,10 @@ Each --field is KIND IN_STEM OUT_STEM. KIND is a config.FIELD_LEGS key and
 fixes the two legs; the stems are field directories under --in-root and
 --out-root, before the ".<traj>". The stems are taken as given, so the same
 generator slices this toolkit's fields or a collaborator's, whatever their
-naming. One par file per --field: the utility is serial and single-process,
-so a field directory is the unit of parallelism.
+naming. One par file per dataset, i.e. per gamma and momentum, of every
+--field: par.select.<out_stem>.<dataset>.xml, holding that dataset's one file
+or its timeslice files. The utility is serial and single-process, so a
+dataset is the unit of parallelism.
 
 Files are DISCOVERED in each input directory at --traj-start rather than built
 from gamma/momentum/type lists, for the reason diff_a2am.py gives: a fixed list
@@ -67,23 +69,28 @@ def axis(leg, n_hit_in, hits, modes):
         n_hit_in=n_hit_in, is_v=(vw == "v"), hits=hits)
 
 
-def select_field(job, kind, in_stem, out_stem, n_hit_in, hits, modes,
-                 probe_traj):
-    """One selection per .h5 file in <in_stem>.<probe_traj>/, written to the
-    same file name under <out_stem>.@traj@/. Returns the file count."""
-    left_leg, right_leg = config.FIELD_LEGS[kind]
-    left = axis(left_leg, n_hit_in, hits, modes)
-    right = axis(right_leg, n_hit_in, hits, modes)
-
+def datasets(in_stem, probe_traj):
+    """The .h5 file names in <in_stem>.<probe_traj>/, grouped by dataset (gamma
+    and momentum): one file each single-file, one per timeslice timesliced."""
     files = sorted(Path(f"{in_stem}.{probe_traj}").glob("*.h5"))
     if not files:
         raise SystemExit(f"no .h5 files in {in_stem}.{probe_traj}")
+    groups = {}
     for f in files:
-        job.add(file=f"{in_stem}.@traj@/{f.name}",
-                dataset=TIMESLICE.sub("", f.stem),
-                output=f"{out_stem}.@traj@/{f.name}",
-                left=left, right=right)
-    return len(files)
+        groups.setdefault(TIMESLICE.sub("", f.stem), []).append(f.name)
+    return groups
+
+
+def select_dataset(job, kind, in_stem, out_stem, dataset, names, n_hit_in,
+                   hits, modes):
+    """One selection per file of `dataset`, written to the same file name
+    under <out_stem>.@traj@/."""
+    left_leg, right_leg = config.FIELD_LEGS[kind]
+    left = axis(left_leg, n_hit_in, hits, modes)
+    right = axis(right_leg, n_hit_in, hits, modes)
+    for name in names:
+        job.add(file=f"{in_stem}.@traj@/{name}", dataset=dataset,
+                output=f"{out_stem}.@traj@/{name}", left=left, right=right)
 
 
 def main():
@@ -116,12 +123,16 @@ def main():
 
     modes = ModeCounts(args.n_low, args.n_high, args.n_sc)
     for kind, in_stem, out_stem in args.field:
-        job = SelectHitsJob(args.traj_start, args.traj_end, args.traj_step)
-        n = select_field(job, kind, f"{args.in_root}/{in_stem}",
-                         f"{args.out_root}/{out_stem}", args.n_hit_in,
-                         args.hits, modes, args.traj_start)
-        path = job.write(Path(args.xml_dir) / f"par.select.{out_stem}.xml")
-        print(f"  {out_stem:32s} {n:5d} files  -> {path}")
+        in_path, out_path = f"{args.in_root}/{in_stem}", f"{args.out_root}/{out_stem}"
+        groups = datasets(in_path, args.traj_start)
+        for dataset, names in groups.items():
+            job = SelectHitsJob(args.traj_start, args.traj_end, args.traj_step)
+            select_dataset(job, kind, in_path, out_path, dataset, names,
+                           args.n_hit_in, args.hits, modes)
+            job.write(Path(args.xml_dir) / f"par.select.{out_stem}.{dataset}.xml")
+        n = sum(len(names) for names in groups.values())
+        print(f"  {out_stem:32s} {len(groups):4d} par files, {n:5d} files "
+              f"-> {args.xml_dir}/par.select.{out_stem}.*.xml")
 
 
 if __name__ == "__main__":
