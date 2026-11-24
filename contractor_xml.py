@@ -286,9 +286,11 @@ class K2pipiJob(_DenseJob):
     A contraction is C_E(dt, tau) = tr(F(dt) E[dt + tau]) with the fixed chain
     F(dt) = T_0[dt + o_0] ... T_{k-1}[dt + o_{k-1}], terms (name, offset) with
     k >= 1, and E each field of `swept`. tau runs over min_t..max_t, dt over
-    `translations`. The fixed fields are loaded whole and every F(dt) is kept;
-    each swept field is streamed one slice at a time, read once for all the
-    contractions that list it. One file per contraction,
+    `translations`. The fixed fields are loaded whole, in contraction order,
+    each at its first use and freed after its last, so the order of
+    add_contraction sets the peak; every F(dt) is kept. Each swept field is
+    streamed one slice at a time, read once for all the contractions that
+    list it. One file per contraction,
     <output>/<name>.<traj>.h5, holding per swept field E the datasets
     <name>_<E>_dt_<dt>, or <name>_<E> with translation_average."""
 
