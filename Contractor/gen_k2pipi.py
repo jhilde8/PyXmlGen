@@ -1,9 +1,9 @@
-"""K -> pipi types 3 and 4, by K2pipiContractorDense: one invocation per hit
-tag, one par file per (loop flavour, EMF type), each a quarter-node task.
+"""K -> pipi types 3 and 4, by K2pipiContractorDense: one par file per hit tag
+and kaon/pion width, a single quarter-node task sweeping every EMF.
 
-    gen_k2pipi.py                    h8: 8 par files, s and l loops x types 0..3
-    gen_k2pipi.py h4                 the 4-hit fields, sliced or computed
-    gen_k2pipi.py h16 --all-gammas   every EMF gamma family
+    gen_k2pipi.py                           h8, kaon and pions unsmeared
+    gen_k2pipi.py h4 --width w2p03_n11      the 4-hit fields, sliced or computed
+    gen_k2pipi.py h16 --all-gammas          every EMF gamma family
 
 Type 3. The two pions sit on the kaon's quark line, the operator's loop is in
 the EMF,
@@ -28,30 +28,38 @@ WW_K is the at-rest kaon W_l x W_s field (mf_ls_ww), VV_Q an EMF (rows the
 strange expanded V, cols the light expanded V), the pions the gen_contract_2pt
 pi fields. One dataset per kaon time (_noavg).
 
-The tiling. An EMF type is one trace and colour topology of the 2023 paper
-(App. B): type 1 1Tr cdiag (B9, B10, B15, B16), type 3 1Tr cmix (B12, B13,
-B18, B19), type 0 2Tr cdiag (B11, B17), type 2 2Tr cmix (B14, B20). The q-loop
-2Tr expressions are needed for both loops, so the s and l loops times the
-four types are the 8 tasks. A task sweeps its type's GammaMU and
-GammaMUGamma5 files (--all-gammas: every config.EMF_GAMMA_FAMILIES family).
-Counting the gamma5 of the strange line's hermiticity, these are the paper's
-gamma_mu gamma5 x gamma_mu and gamma_mu x gamma_mu gamma5 terms; LL and LR
-are their sum and difference, in analysis. Types 3 and 4 share a task, since
-each swept slice is read once for every contraction listing it.
+The swept fields. An EMF type is one trace and colour topology of the 2023
+paper (App. B): type 1 1Tr cdiag (B9, B10, B15, B16), type 3 1Tr cmix (B12,
+B13, B18, B19), type 0 2Tr cdiag (B11, B17), type 2 2Tr cmix (B14, B20). The
+q-loop 2Tr expressions are needed for both loops, so every contraction sweeps
+the s and l loops times the four types, each type's GammaMU and GammaMUGamma5
+files (--all-gammas: every config.EMF_GAMMA_FAMILIES family). Counting the
+gamma5 of the strange line's hermiticity, these are the paper's gamma_mu
+gamma5 x gamma_mu and gamma_mu x gamma_mu gamma5 terms; LL and LR are their
+sum and difference, in analysis.
+
+The fixed chains depend only on the kaon and pions, so one task reads each
+pion field and builds each chain once for every swept field. The load phase
+is serial-read bound (one HDF5 stream per task), which is why the loops and
+types share a task rather than splitting it.
 
 The subtraction operator. The mix field with Identity, config.MIX_GAMMAS'
 first gamma, is sbar gamma5 d in the same counting (B79-B86). Its legs are an
-EMF's, so it is one more swept field of the first task's contractions,
-sharing their fixed chains; its datasets are <contraction>_mix_Identity_0_0_0.
+EMF's, so it is one more swept field.
+
+Datasets are <contraction>_<swept>_dt_<dt>, the swept name carrying loop,
+accuracy, EMF type and gamma family (emf_sloop_type1_GammaMU_GammaMU) or the
+mix (mix_Identity_0_0_0).
 
 Memory. The contractor loads each fixed field at its first use and frees it
 after its last, and the contractions here are grouped by pion pair {p, -p},
 so at most the kaon and two pion fields are resident, plus the fixed chains
-(dense light W x dense strange W per dt).
+(dense light W x dense strange W per dt), all held until the sweep.
 
-Files go to <OUTPUT_ROOT>/contractor/k2pipi/par.k2pipi.<tag>[.<width>].<f>loop_type<T>.xml,
-no width when unsmeared, with TRAJ_START / TRAJ_END left for the submission
-script to substitute, as for the CG. Correlators to contract_k2pipi[_<tag>], one file per contraction.
+Files go to <OUTPUT_ROOT>/contractor/k2pipi/par.k2pipi.<tag>[.<width>].xml, no
+width when unsmeared, with TRAJ_START / TRAJ_END left for the submission
+script to substitute, as for the CG. Correlators to contract_k2pipi[_<tag>],
+one file per contraction.
 """
 import argparse
 import sys
@@ -92,10 +100,33 @@ def pion_pairs():
     return pairs
 
 
-def build(preset, smear, loop, emf_type, gammas, mix, tseps, delta, output):
-    """One task: types 3 and 4 against the `gammas` families of one EMF type
-    and loop flavour, plus the subtraction operator with `mix`, for every
-    accuracy of the preset, kaon and pions at one smearing."""
+def swept_fields(job, preset, acc, gammas):
+    """Register every EMF of LOOPS x EMF_TYPES x `gammas`, then the mix, at
+    accuracy `acc`; return their names in that order."""
+    swept = []
+    row, col = config.field_axes("emf")
+    for loop in LOOPS:
+        for emf_type in EMF_TYPES:
+            for family in gammas:
+                io = emf_ioname(emf_type, family)
+                name = f"emf_{loop}loop{acc}_{io}"
+                job.add_matrix(name=name,
+                               file=f"{preset['base']}/emf_{loop}loop_{preset['tag']}{acc}.@traj@/{io}.h5",
+                               dataset=io, row=row, col=col)
+                swept.append(name)
+    io = ioname(MIX_GAMMA, REST)
+    name = f"mix{acc}_{io}"
+    row, col = config.field_axes("mix")
+    job.add_matrix(name=name,
+                   file=f"{preset['base']}/mix_{preset['tag']}{acc}.@traj@/{io}.h5",
+                   dataset=io, row=row, col=col)
+    swept.append(name)
+    return swept
+
+
+def build(preset, smear, gammas, tseps, delta, output):
+    """The task: types 3 and 4 against every swept field, for every accuracy
+    of the preset, kaon and pions at one smearing."""
     job = K2pipiJob(config.N_T, output, "TRAJ_START", "TRAJ_END")
     translations = f"0..{config.N_T - 1}"
 
@@ -107,26 +138,9 @@ def build(preset, smear, loop, emf_type, gammas, mix, tseps, delta, output):
                    dataset=ioname(config.IDENTITY, REST), row=row, col=col)
 
     for acc in preset["accuracies"]:
-        swept = []
-        row, col = config.field_axes("emf")
-        for family in gammas:
-            io = emf_ioname(emf_type, family)
-            name = f"emf_{loop}loop{acc}_{io}"
-            job.add_matrix(name=name,
-                           file=f"{preset['base']}/emf_{loop}loop_{preset['tag']}{acc}.@traj@/{io}.h5",
-                           dataset=io, row=row, col=col)
-            swept.append(name)
-        if mix:
-            io = ioname(MIX_GAMMA, REST)
-            name = f"mix{acc}_{io}"
-            row, col = config.field_axes("mix")
-            job.add_matrix(name=name,
-                           file=f"{preset['base']}/mix_{preset['tag']}{acc}.@traj@/{io}.h5",
-                           dataset=io, row=row, col=col)
-            swept.append(name)
-        op = f"emf_{loop}loop{acc}_type{emf_type}"
+        swept = swept_fields(job, preset, acc, gammas)
 
-        job.add_contraction(name=f"T4_{kaon}_{op}_noavg", terms=[(kaon, 0)],
+        job.add_contraction(name=f"T4{acc}_{kaon}_noavg", terms=[(kaon, 0)],
                             swept=swept, translations=translations, min_t=0,
                             max_t=MAX_T, translation_average=False)
 
@@ -143,7 +157,7 @@ def build(preset, smear, loop, emf_type, gammas, mix, tseps, delta, output):
                     tag = product_tag(p, order, delta)
                     for tsep in tseps:
                         job.add_contraction(
-                            name=f"T3_{stem}_{tag}_t{tsep}_{kaon}_{op}_noavg",
+                            name=f"T3_{stem}_{tag}_t{tsep}_{kaon}_noavg",
                             terms=[(left, tsep + dl), (right, tsep + dr), (kaon, 0)],
                             swept=swept, translations=translations,
                             min_t=0, max_t=tsep, translation_average=False)
@@ -179,18 +193,13 @@ def main():
     gammas = config.EMF_GAMMA_FAMILIES.split() if args.all_gammas else SM_GAMMAS
 
     out_dir = Path(config.OUTPUT_ROOT) / "contractor" / "k2pipi"
-    tasks = [(loop, t) for loop in LOOPS for t in EMF_TYPES]
-    for k, (loop, emf_type) in enumerate(tasks):
-        job = build(preset, smear, loop, emf_type, gammas, k == 0, args.tseps,
-                    args.delta, output)
-        path = job.write(out_dir / f"par.k2pipi.{args.tag}{smear.replace('_', '.', 1)}"
-                                   f".{loop}loop_type{emf_type}.xml")
-        n_swept = len({e for _, s, *_ in job.contractions.values() for e in s})
-        print(f"  {path.name:36s} {len(job.contractions):4d} contractions, "
-              f"{n_swept} swept field(s){' with the mix' if k == 0 else ''}")
-    print(f"wrote {len(tasks)} tasks for {args.tag} to {out_dir}: {' '.join(gammas)}, "
-          f"kaon and pions {args.width}, tseps {' '.join(map(str, args.tseps))}, "
-          f"Delta {args.delta}")
+    job = build(preset, smear, gammas, args.tseps, args.delta, output)
+    path = job.write(out_dir / f"par.k2pipi.{args.tag}{smear.replace('_', '.', 1)}.xml")
+    n_swept = len({e for _, s, *_ in job.contractions.values() for e in s})
+    print(f"wrote {path}: {len(job.contractions)} contractions, {n_swept} swept "
+          f"field(s) ({' '.join(gammas)} x {len(LOOPS)} loops x {len(EMF_TYPES)} "
+          f"types + mix, per accuracy), kaon and pions {args.width}, tseps "
+          f"{' '.join(map(str, args.tseps))}, Delta {args.delta}")
     print(f"  correlators   {output}/")
 
 

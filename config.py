@@ -486,7 +486,7 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
 # scheduleFile against the job's cwd, and the submission script cds to the
 # Lustre working directory, so a relative "./xml/schedule.*.txt" only works
 # because of that choice. Writing it absolute removes the dependency. MF_DIR
-# also holds check_mf.py's manifests and reports.
+# also holds check_mf.py's reports.
 MF_DIR = f"{ROOTS.jobs}/MF"
 XML_DIR = f"{MF_DIR}/xml"
 
@@ -518,87 +518,23 @@ def schedule_file(run_id):
 # timeSliceIO "<output>.<traj>/<ioname>.t%04d.h5", so a field lives at
 # <MF_BASE>/<stem>.<traj>/ and the contractor gets the whole-field path with
 # @traj@ still in it.
-MF_BASE = f"{ROOTS.data}/mf"
-
+#
 # The AMA correction hit: one extra sloppy hit plus its exact solve. Same
-# layout, different tree, and the fields there are 1-hit -- so a par file
-# contracting them needs nHit = 1, not N_HIT. See [[project_ama_correction_hit]].
-MF_AMA_BASE = f"{ROOTS.data}/mf_ama"
+# layout, different tree (mf_ama), and the fields there are 1-hit -- so a par
+# file contracting them needs nHit = 1, not N_HIT. See
+# [[project_ama_correction_hit]].
+#
+# On a machine with REPLICAS each replica's submission script drains to its
+# own tree, mf.<rep> or mf_ama.<rep>, and the untagged one holds verified
+# fields only, as with vw_base. The XMLs are the same for every replica: they
+# write to TMP_OUTPUT, and only the drain destination differs.
+def mf_base(ama=False, replica=None):
+    check_replica(replica)
+    return (f"{ROOTS.data}/mf" + ("_ama" if ama else "")
+            + ("" if replica is None else f".{replica}"))
 
-# Every drained field of each contraction job, as tag -> (base, {field:
-# {bytes per file: files}}), for check_mf.py. Tabulated from a good
-# configuration, in module order. A size is the payload rounded up to whole
-# HDF5 chunks plus headers, so it changes with any block size, hit count or
-# leg size: retabulate after changing one. A field can hold more than one
-# size because string metadata is padded to 8 bytes, so a gamma name longer
-# than 8 characters costs 8 bytes (twice in an EMF: gamma1 and gamma2).
-# h8 and ama tabulated 2026-10-27 from conf 1540.
-MF_EXPECTED = {
-    "h8": (MF_BASE, {
-        "mf_ls_ww_h8":           {3250040: 896},
-        "mf_sl_h8":              {22026240: 896},
-        "mf_ls_h8":              {453023840: 896},
-        "mf_ll_h8":              {528521600: 896},
-        "mf_pi_h8":              {486598768: 3456},
-        "emf_sloop_h8":          {2818758272: 1536, 2818758288: 1024},
-        "emf_lloop_h8":          {2818758272: 1536, 2818758288: 1024},
-        "emf_cloop_h8":          {2818758272: 1536, 2818758288: 1024},
-        "cmf_h8":                {2818758216: 512},
-        "cmf_ape_h8":            {2818758216: 512},
-        "mix_h8":                {2818758304: 256},
-        "mf_ls_ww_h8_w2p03_n11": {3250040: 896},
-        "mf_sl_h8_w2p03_n11":    {22026240: 896},
-        "mf_ls_h8_w2p03_n11":    {453023840: 896},
-        "mf_ll_h8_w2p03_n11":    {528521600: 896},
-        "mf_pi_h8_w2p03_n11":    {486598768: 3456},
-        "mf_ls_ww_h8_w4p1_n45":  {3250040: 896},
-        "mf_sl_h8_w4p1_n45":     {22026240: 896},
-        "mf_ls_h8_w4p1_n45":     {453023840: 896},
-        "mf_ll_h8_w4p1_n45":     {528521600: 896},
-        "mf_pi_h8_w4p1_n45":     {486598768: 3456},
-    }),
-    "ama": (MF_AMA_BASE, {
-        "mf_ls_ww_ama":               {403072: 896},
-        "mf_sl_ama_sloppy":           {694104: 896},
-        "mf_ls_ama_sloppy":           {50337760: 896},
-        "mf_ll_ama_sloppy":           {117459424: 896},
-        "mf_pi_ama_sloppy":           {115450744: 3456},
-        "mf_sl_ama_exact":            {694104: 896},
-        "mf_ls_ama_exact":            {50337760: 896},
-        "mf_ll_ama_exact":            {117459424: 896},
-        "mf_pi_ama_exact":            {115450744: 3456},
-        "emf_sloop_ama_sloppy":       {88099152: 1536, 88099168: 1024},
-        "emf_lloop_ama_sloppy":       {88099152: 1536, 88099168: 1024},
-        "emf_cloop_ama_sloppy":       {88099152: 1536, 88099168: 1024},
-        "cmf_ama_sloppy":             {88099096: 512},
-        "cmf_ape_ama_sloppy":         {88099096: 512},
-        "mix_ama_sloppy":             {88099184: 256},
-        "emf_sloop_ama_exact":        {88099152: 1536, 88099168: 1024},
-        "emf_lloop_ama_exact":        {88099152: 1536, 88099168: 1024},
-        "emf_cloop_ama_exact":        {88099152: 1536, 88099168: 1024},
-        "cmf_ama_exact":              {88099096: 512},
-        "cmf_ape_ama_exact":          {88099096: 512},
-        "mix_ama_exact":              {88099184: 256},
-        "mf_ls_ww_ama_w2p03_n11":     {403072: 896},
-        "mf_sl_ama_sloppy_w2p03_n11": {694104: 896},
-        "mf_ls_ama_sloppy_w2p03_n11": {50337760: 896},
-        "mf_ll_ama_sloppy_w2p03_n11": {117459424: 896},
-        "mf_pi_ama_sloppy_w2p03_n11": {115450744: 3456},
-        "mf_sl_ama_exact_w2p03_n11":  {694104: 896},
-        "mf_ls_ama_exact_w2p03_n11":  {50337760: 896},
-        "mf_ll_ama_exact_w2p03_n11":  {117459424: 896},
-        "mf_pi_ama_exact_w2p03_n11":  {115450744: 3456},
-        "mf_ls_ww_ama_w4p1_n45":      {403072: 896},
-        "mf_sl_ama_sloppy_w4p1_n45":  {694104: 896},
-        "mf_ls_ama_sloppy_w4p1_n45":  {50337760: 896},
-        "mf_ll_ama_sloppy_w4p1_n45":  {117459424: 896},
-        "mf_pi_ama_sloppy_w4p1_n45":  {115450744: 3456},
-        "mf_sl_ama_exact_w4p1_n45":   {694104: 896},
-        "mf_ls_ama_exact_w4p1_n45":   {50337760: 896},
-        "mf_ll_ama_exact_w4p1_n45":   {117459424: 896},
-        "mf_pi_ama_exact_w4p1_n45":   {115450744: 3456},
-    }),
-}
+MF_BASE = mf_base()
+MF_AMA_BASE = mf_base(ama=True)
 
 # Correlators, and the contractor's own scratch. diskVectorDir is only written
 # to when a field spills its cache (DiskVectorBase::evict fires at
